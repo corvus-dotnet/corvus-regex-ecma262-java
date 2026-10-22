@@ -69,7 +69,7 @@ jobs:
       # Deep, wide and long patterns in every grammar through every member, each on threads with stacks of 8 MB, 1 MB
       # and 256 KB: none may overflow (tools/stackprobe/StackProbe.java).
       run: |
-        javac -Xlint:all -Werror -d tools/stackprobe/out -cp target/classes tools/stackprobe/StackProbe.java
+        javac -encoding UTF-8 -Xlint:all -Werror -d tools/stackprobe/out -cp target/classes tools/stackprobe/StackProbe.java
         java -Xmx4g -cp "target/classes${{ runner.os == 'Windows' && ';' || ':' }}tools/stackprobe/out" StackProbe
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
@@ -79,7 +79,7 @@ jobs:
         persist-credentials: false
     - name: Run the ECMA-262 test data
       run: |
-        javac -Xlint:all -Werror -d tools/dataset/out -cp target/classes tools/dataset/Dataset.java
+        javac -encoding UTF-8 -Xlint:all -Werror -d tools/dataset/out -cp target/classes tools/dataset/Dataset.java
         java -Xss4m -cp "target/classes${{ runner.os == 'Windows' && ';' || ':' }}tools/dataset/out" Dataset ecma262-regex-test-data/data wrong-cases.tsv
     - name: Run the ECMA-262 test data with the memory of failed places from the first step
       if: runner.os == 'Linux'

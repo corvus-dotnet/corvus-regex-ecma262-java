@@ -51,7 +51,7 @@ JDK 17 and Maven 3.9: `mvn verify` builds the library with warnings denied and r
 in, and CI runs it with `--check`). The test data runs with
 
 ```sh
-javac -d tools/dataset/out -cp target/classes tools/dataset/Dataset.java
+javac -encoding UTF-8 -d tools/dataset/out -cp target/classes tools/dataset/Dataset.java
 java -Xss4m -cp target/classes:tools/dataset/out Dataset <ecma262-regex-test-data>/data wrong-cases.tsv
 ```
 

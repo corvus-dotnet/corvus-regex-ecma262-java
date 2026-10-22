@@ -205,15 +205,15 @@ final class Matcher8 {
             case ALL:
                 return n;
             case STOPS: {
-                int f = s.stops == 1 ? Swar.indexOf(input, at, n, s.stop0)
-                        : s.stops == 2 ? Swar.indexOf(input, at, n, s.stop0, s.stop1)
-                        : Swar.indexOf(input, at, n, s.stop0, s.stop1, s.stop2);
+                int f = s.stops == 1 ? Kernels.indexOf(input, at, n, s.stop0)
+                        : s.stops == 2 ? Kernels.indexOf(input, at, n, s.stop0, s.stop1)
+                        : Kernels.indexOf(input, at, n, s.stop0, s.stop1, s.stop2);
                 return f < 0 ? n : f;
             }
             case LINE: {
                 int k = at;
                 while (true) {
-                    int j = Swar.indexOf(input, k, n, '\n', '\r', 0xE2);
+                    int j = Kernels.indexOf(input, k, n, '\n', '\r', 0xE2);
                     if (j < 0) {
                         return n;
                     }

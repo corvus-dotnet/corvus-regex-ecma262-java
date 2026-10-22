@@ -29,7 +29,7 @@ import java.util.zip.GZIPInputStream;
  *
  * <pre>
  *   java -cp target/classes:tools/benchmarks/out Industry &lt;workloads.json&gt;
- *        [--engines corvus-utf8,corvus-utf16,jdk,tregex,v8] [--v8 &lt;industry.mjs&gt;] [--tregex &lt;GraalJS node&gt;]
+ *        [--engines corvus-utf8,corvus-utf16,corvus-utf8-vector,corvus-utf16-vector,jdk,tregex,v8] [--v8 &lt;industry.mjs&gt;] [--tregex &lt;GraalJS node&gt;]
  *        [--rounds 3] [--seconds 0.7] [--passes 7] [--spread 0.05] [--filter &lt;substring of the id&gt;]
  *        [--out &lt;results.json&gt;]
  * </pre>
@@ -45,7 +45,9 @@ import java.util.zip.GZIPInputStream;
  * ECMA-262: after an empty match the search goes on one code point later.
  *
  * <p>The engines: this library over UTF-8 ({@link Utf8Text}) and over UTF-16 ({@code String}), with the workload's
- * flags and {@code u}; {@code jdk}, {@code java.util.regex}, the platform's standard engine, which is given the
+ * flags and {@code u}, in each of its two modes: its own searches ({@code corvus-utf8}, {@code corvus-utf16}) and the
+ * Vector API's, which it takes where the JVM has the module {@code jdk.incubator.vector} ({@code corvus-utf8-vector},
+ * {@code corvus-utf16-vector}, run with {@code --add-modules jdk.incubator.vector}); {@code jdk}, {@code java.util.regex}, the platform's standard engine, which is given the
  * pattern as it is and the flags i (with Unicode case), m and s, and whose row is absent where the pattern does not
  * compile; {@code tregex}, TRegex, the ECMA-262 engine of GraalJS, run by GraalVM's Node ({@code --tregex}) over the
  * V8 harness; and V8 ({@code --v8}, the harness run by {@code node}), with {@code gu} added. An engine written
@@ -62,7 +64,8 @@ public final class Industry {
 
     static final String SOURCE = "https://raw.githubusercontent.com/dotnet/performance/main/src/benchmarks/micro/"
             + "libraries/System.Text.RegularExpressions/TestData/";
-    static final List<String> ENGINES = List.of("corvus-utf8", "corvus-utf16", "jdk");
+    static final List<String> ENGINES =
+            List.of("corvus-utf8", "corvus-utf16", "corvus-utf8-vector", "corvus-utf16-vector", "jdk");
 
     /** What the counts are summed into, so that no count is taken away as dead code. */
     static volatile long sink;
@@ -424,6 +427,12 @@ public final class Industry {
                 engine = engine.substring(0, at);
             }
             command.add(Paths.get(System.getProperty("java.home"), "bin", "java").toString());
+            // The library's second mode: the Vector API's searches, which the JVM takes with the module added.
+            if (engine.endsWith("-vector")) {
+                command.add("--add-modules");
+                command.add("jdk.incubator.vector");
+                engine = engine.substring(0, engine.length() - "-vector".length());
+            }
             command.add("-cp");
             command.add(classPath);
             command.add("Industry");

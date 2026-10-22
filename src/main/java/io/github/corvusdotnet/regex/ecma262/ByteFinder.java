@@ -150,7 +150,7 @@ abstract class ByteFinder {
             if (from > end) {
                 return -1;
             }
-            int p = Swar.indexOf(h, from, end, b);
+            int p = Kernels.indexOf(h, from, end, b);
             return p < 0 ? -1 : span(p, p + 1);
         }
     }
@@ -173,7 +173,7 @@ abstract class ByteFinder {
             int at = from + k;
             byte b = literal[k];
             while (at < end) {
-                int p = Swar.indexOf(h, at, end, b);
+                int p = Kernels.indexOf(h, at, end, b);
                 if (p < 0) {
                     return -1;
                 }
@@ -280,10 +280,10 @@ abstract class ByteFinder {
         long find(byte[] h, int from, int end) {
             int at = from + k;
             while (at < end) {
-                int p = count == 1 ? Swar.indexOf(h, at, end, a)
-                        : count == 2 ? Swar.indexOf(h, at, end, a, b)
-                        : count > 0 ? Swar.indexOf(h, at, end, a, b, c, d)
-                        : Swar.indexOfBetween(h, at, end, lo, hi);
+                int p = count == 1 ? Kernels.indexOf(h, at, end, a)
+                        : count == 2 ? Kernels.indexOf(h, at, end, a, b)
+                        : count > 0 ? Kernels.indexOf(h, at, end, a, b, c, d)
+                        : Kernels.indexOfBetween(h, at, end, lo, hi);
                 if (p < 0) {
                     return -1;
                 }
@@ -382,6 +382,12 @@ abstract class ByteFinder {
         final long[] vi;
         final long[] mj;
         final long[] vj;
+        /**
+         * The same tests as bytes for the Vector API's loop, four of each position as mask and value (a position of
+         * fewer repeats its last test).
+         */
+        final byte[] testsI;
+        final byte[] testsJ;
         /** For each of the first bytes of the literals, up to {@link #CHECKED}, the values they hold there. */
         final boolean[][] sets;
         /**
@@ -400,8 +406,20 @@ abstract class ByteFinder {
             this.vi = broadcastEach(ti, 1);
             this.mj = broadcastEach(tj, 0);
             this.vj = broadcastEach(tj, 1);
+            this.testsI = fourTests(ti);
+            this.testsJ = fourTests(tj);
             this.sets = sets;
             this.every = every;
+        }
+
+        private static byte[] fourTests(int[] tests) {
+            byte[] out = new byte[8];
+            for (int k = 0; k < 4; k++) {
+                int t = Math.min(k, tests.length / 2 - 1);
+                out[2 * k] = (byte) tests[2 * t];
+                out[2 * k + 1] = (byte) tests[2 * t + 1];
+            }
+            return out;
         }
 
         private static long[] broadcastEach(int[] tests, int which) {
@@ -497,7 +515,7 @@ abstract class ByteFinder {
         }
 
         /** Where the literal that starts at {@code at} ends (the first in the pattern's order), or -1. */
-        private int literalAt(byte[] h, int at, int end) {
+        int literalAt(byte[] h, int at, int end) {
             int n = Math.min(sets.length, end - at);
             for (int k = 0; k < n; k++) {
                 if (!sets[k][h[at + k] & 0xFF]) {
@@ -529,6 +547,12 @@ abstract class ByteFinder {
 
         @Override
         long find(byte[] h, int from, int end) {
+            ByteKernels v = Kernels.VECTOR;
+            return v != null ? v.pairFind(this, h, from, end) : findFrom(h, from, end);
+        }
+
+        /** {@link #find} by SWAR: eight starts a step, then one at a time. */
+        long findFrom(byte[] h, int from, int end) {
             int last = end - shortest;
             if (from > last) {
                 return -1;

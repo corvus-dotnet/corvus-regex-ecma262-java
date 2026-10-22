@@ -20,6 +20,12 @@ Regular expressions with the grammar and the answers of ECMA-262, the `RegExp` o
   hang. `Regex.setDefaultMatchTimeout`, or the system property `corvus.regex.defaultMatchTimeout`, gives every
   pattern one.
 
+- Two modes of searching for where a match can start. By default the library's own searches, which read a text
+  eight bytes at a time and need nothing of the JVM. Started with `--add-modules jdk.incubator.vector`, the JVM gives
+  the library the Vector API, and it searches a vector at a time (32 bytes with AVX2). The module is incubating in
+  every JDK so far, so adding it is how a program opts in; without it, nothing of the Vector API is loaded. Both modes
+  give the same answers, and CI runs everything in each.
+
 **Compliance.** Over the [ECMA-262 test data](https://github.com/corvus-dotnet/ecma262-regex-test-data) (what V8
 says about 117,889 patterns and 5,884,566 texts, test262's and `exec`, the global search, `replace` and `split` among
 them), the library gives 26,950,829 right answers and none wrong, refuses no valid pattern, accepts no invalid one and
@@ -48,14 +54,16 @@ the benchmark harness.
 
 The [central benchmark site](https://corvus-oss.org/corvus-regex-ecma262-benchmarks/) runs this repository's harness
 image, `ghcr.io/corvus-dotnet/corvus-regex-ecma262-java`, each night beside every other Corvus ECMA-262 engine: this
-library over UTF-8 and UTF-16, `java.util.regex`, TRegex (the regex engine of GraalJS, run by GraalVM's Node) and V8,
+library over UTF-8 and UTF-16 in both modes, `java.util.regex`, TRegex (the regex engine of GraalJS, run by GraalVM's Node) and V8,
 over the Industry workloads of dotnet/performance, with each ECMA-262 engine's compliance over the test data. This
 repository publishes no figures of its own. `tools/benchmarks/run.sh <workloads.json> <texts> <out.json>` runs the
 same harness anywhere (see the script for what it needs).
 
 ## Building
 
-JDK 17 and Maven 3.9: `mvn verify` builds the library with warnings denied and runs the tests. The templates of
+JDK 25 and Maven 3.9: `mvn verify` builds the library for Java 17 with warnings denied (the Vector API's searches
+compile against the incubating module, whose warning only JDK 25's javac can leave out) and runs the tests in both
+modes. The templates of
 `src/template` are expanded into one class per encoding by `python3 tools/expand.py` (the expanded files are checked
 in, and CI runs it with `--check`). The test data runs with
 

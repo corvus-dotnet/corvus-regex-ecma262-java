@@ -31,9 +31,12 @@ jobs:
       with:
         persist-credentials: false
     - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      # JDK 25 builds (for Java 17) and tests; JDK 17, the oldest the library runs on, tests the same classes again.
       with:
         distribution: temurin
-        java-version: '17'
+        java-version: |
+          17
+          25
         cache: maven
     - name: The expanded templates are current
       run: python3 tools/expand.py --check
@@ -58,6 +61,14 @@ jobs:
         persist-credentials: false
     - name: Build and test
       run: mvn -B -ntp verify
+      env:
+        JSON_SCHEMA_TEST_SUITE: ${{ github.workspace }}/JSON-Schema-Test-Suite
+    - name: Test on Java 17, in both modes
+      # The classes JDK 25 built, run by JDK 17: the Vector API's searches link to JDK 17's incubating module.
+      if: runner.os == 'Linux'
+      run: >-
+        mvn -B -ntp surefire:test@default-test surefire:test@vector -DargLine=
+        -Djvm="$JAVA_HOME_17_X64/bin/java"
       env:
         JSON_SCHEMA_TEST_SUITE: ${{ github.workspace }}/JSON-Schema-Test-Suite
     - name: Test with the memory of failed places from the first step
@@ -87,6 +98,10 @@ jobs:
       run: |
         javac -encoding UTF-8 -Xlint:all -Werror -d tools/dataset/out -cp target/classes tools/dataset/Dataset.java
         java -Xss4m -cp "target/classes${{ runner.os == 'Windows' && ';' || ':' }}tools/dataset/out" Dataset ecma262-regex-test-data/data wrong-cases.tsv
+    - name: Run the ECMA-262 test data with the Vector API's searches
+      run: >-
+        java -Xss4m --add-modules jdk.incubator.vector -cp "target/classes${{ runner.os == 'Windows' && ';' || ':' }}tools/dataset/out"
+        Dataset ecma262-regex-test-data/data wrong-cases-vector.tsv
     - name: Run the ECMA-262 test data with the memory of failed places from the first step
       if: runner.os == 'Linux'
       run: >-

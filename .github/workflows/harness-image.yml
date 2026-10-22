@@ -44,7 +44,8 @@ jobs:
         schemas = sorted(s["name"] for s in d["schemas"])
         impls = sorted(i["name"] for i in d["impls"])
         assert schemas == ["sherlock: aei", "sherlock: zqj"], schemas
-        engines = ["TRegex", "V8", "corvus-regex-ecma262 UTF-16", "corvus-regex-ecma262 UTF-8", "java.util.regex"]
+        engines = sorted(["TRegex", "V8", "corvus-regex-ecma262 UTF-16", "corvus-regex-ecma262 UTF-8",
+                          "corvus-regex-ecma262 UTF-16 (Vector API)", "corvus-regex-ecma262 UTF-8 (Vector API)", "java.util.regex"])
         assert impls == engines, impls
         for name in engines:
             for w in schemas:

@@ -6,3 +6,4 @@ target/
 __pycache__/
 tools/dataset/out/
 tools/stackprobe/out/
+tools/benchmarks/out/

@@ -65,6 +65,12 @@ jobs:
       run: mvn -B -ntp test -DcorvusArgLine=-Dcorvus.regex.memoFromTheStart=true
       env:
         JSON_SCHEMA_TEST_SUITE: ${{ github.workspace }}/JSON-Schema-Test-Suite
+    - name: The benchmark harness builds
+      if: runner.os == 'Linux'
+      run: |
+        tools/benchmarks/build.sh
+        javac -encoding UTF-8 -Xlint:all -Werror -d target/harness/check -cp target/harness/lib tools/benchmarks/Industry.java
+        python3 -m py_compile tools/benchmarks/industry-results.py tools/benchmarks/tregex-compliance.py
     - name: Probe for stack overflows
       # Deep, wide and long patterns in every grammar through every member, each on threads with stacks of 8 MB, 1 MB
       # and 256 KB: none may overflow (tools/stackprobe/StackProbe.java).

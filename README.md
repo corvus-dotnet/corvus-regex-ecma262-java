@@ -44,6 +44,15 @@ re.replaceAll("2026-10-22", "$<month>/$<year>");          // "10/2026-22"
 Not yet released: the first release, 0.1.0 on Maven Central as `io.github.corvus-dotnet:corvus-regex-ecma262`, follows
 the benchmark harness.
 
+## Benchmarks
+
+The [central benchmark site](https://corvus-oss.org/corvus-regex-ecma262-benchmarks/) runs this repository's harness
+image, `ghcr.io/corvus-dotnet/corvus-regex-ecma262-java`, each night beside every other Corvus ECMA-262 engine: this
+library over UTF-8 and UTF-16, `java.util.regex`, TRegex (the regex engine of GraalJS, run by GraalVM's Node) and V8,
+over the Industry workloads of dotnet/performance, with each ECMA-262 engine's compliance over the test data. This
+repository publishes no figures of its own. `tools/benchmarks/run.sh <workloads.json> <texts> <out.json>` runs the
+same harness anywhere (see the script for what it needs).
+
 ## Building
 
 JDK 17 and Maven 3.9: `mvn verify` builds the library with warnings denied and runs the tests. The templates of

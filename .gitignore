@@ -5,3 +5,4 @@ target/
 .vscode/
 __pycache__/
 tools/dataset/out/
+tools/stackprobe/out/

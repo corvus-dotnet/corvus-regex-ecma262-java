@@ -1,0 +1,109 @@
+# Build (warnings denied), the tests, the generated files, the stack probe and the ECMA-262 test data, on Linux and
+# Windows. The data (github.com/corvus-dotnet/ecma262-regex-test-data) is pinned to a commit; the pass is 0 wrong
+# answers, 0 refusals of a valid pattern, 0 acceptances of an invalid one and 0 matches at their limit, in both
+# encodings.
+name: ci
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+  schedule:
+  - cron: '37 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      with:
+        distribution: temurin
+        java-version: '17'
+        cache: maven
+    - name: The expanded templates are current
+      run: python3 tools/expand.py --check
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # The Unicode tables and the properties of strings are written from the Rust crate's, at the version this
+      # engine ports.
+      with:
+        repository: corvus-dotnet/corvus-regex-ecma262-rs
+        ref: f4ae7f996e7959f3d53c762d33648ba0605b404e
+        path: corvus-regex-ecma262-rs
+        persist-credentials: false
+    - name: The generated tables are current
+      run: |
+        python3 tools/unicode/gen_tables.py corvus-regex-ecma262-rs/corvus-regex-ecma262/src/tables_gen.rs --check
+        python3 tools/unicode/gen_strings.py corvus-regex-ecma262-rs/corvus-regex-ecma262/src/strings_gen.rs --check
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # The patterns and instances of the suite, which the tests compare the automaton and the matcher over.
+      with:
+        repository: json-schema-org/JSON-Schema-Test-Suite
+        ref: be54236db6e8e6bb2e098ed16fb4c61e73f5a9ac
+        path: JSON-Schema-Test-Suite
+        persist-credentials: false
+    - name: Build and test
+      run: mvn -B -ntp verify
+      env:
+        JSON_SCHEMA_TEST_SUITE: ${{ github.workspace }}/JSON-Schema-Test-Suite
+    - name: Test with the memory of failed places from the first step
+      if: runner.os == 'Linux'
+      run: mvn -B -ntp test -DcorvusArgLine=-Dcorvus.regex.memoFromTheStart=true
+      env:
+        JSON_SCHEMA_TEST_SUITE: ${{ github.workspace }}/JSON-Schema-Test-Suite
+    - name: Probe for stack overflows
+      # Deep, wide and long patterns in every grammar through every member, each on threads with stacks of 8 MB, 1 MB
+      # and 256 KB: none may overflow (tools/stackprobe/StackProbe.java).
+      run: |
+        javac -Xlint:all -Werror -d tools/stackprobe/out -cp target/classes tools/stackprobe/StackProbe.java
+        java -Xmx4g -cp "target/classes${{ runner.os == 'Windows' && ';' || ':' }}tools/stackprobe/out" StackProbe
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        repository: corvus-dotnet/ecma262-regex-test-data
+        ref: 623f7ef20cc6eb51572ba8b7cd130ce265d43a33
+        path: ecma262-regex-test-data
+        persist-credentials: false
+    - name: Run the ECMA-262 test data
+      run: |
+        javac -Xlint:all -Werror -d tools/dataset/out -cp target/classes tools/dataset/Dataset.java
+        java -Xss4m -cp "target/classes${{ runner.os == 'Windows' && ';' || ':' }}tools/dataset/out" Dataset ecma262-regex-test-data/data wrong-cases.tsv
+    - name: Run the ECMA-262 test data with the memory of failed places from the first step
+      if: runner.os == 'Linux'
+      run: >-
+        java -Xss4m -Dcorvus.regex.memoFromTheStart=true -cp target/classes:tools/dataset/out Dataset
+        ecma262-regex-test-data/data wrong-cases-memo.tsv
+    - name: Keep the wrong cases
+      if: failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: wrong-cases-${{ matrix.os }}
+        path: wrong-cases*.tsv
+
+  gate:
+    # The one check of this workflow that the ruleset of main requires: it passes when every job above passed (or was
+    # skipped), so a job added here is required with no change to the ruleset.
+    name: CI gate
+    if: always()
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Every job passed
+      env:
+        RESULTS: ${{ toJSON(needs.*.result) }}
+      run: |
+        echo "$RESULTS"
+        if echo "$RESULTS" | grep -qE '"(failure|cancelled)"'; then exit 1; fi

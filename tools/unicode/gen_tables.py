@@ -7,7 +7,7 @@ bounds (see Table.java). Array initialisers of that size would pass the 64 KB li
 is written as a string constant (one char for a 16-bit bound, two for a 32-bit one) and decoded when the class loads.
 The case mappings are written the same way, six chars a row.
 
-    python3 tools/unicode/gen_tables.py <path to tables_gen.rs> [output]
+    python3 tools/unicode/gen_tables.py <path to tables_gen.rs> [output] [--check]
 """
 import re
 import sys
@@ -48,8 +48,9 @@ def ints(text):
 
 
 def main():
-    source = sys.argv[1]
-    output = sys.argv[2] if len(sys.argv) > 2 else OUT
+    args = [a for a in sys.argv[1:] if a != "--check"]
+    source = args[0]
+    output = args[1] if len(args) > 1 else OUT
     rs = open(source, encoding="utf-8").read()
     version = re.search(r'pub\(crate\) const VERSION: &str = "([^"]+)";', rs).group(1)
     header = rs.split("\n")[0:2]

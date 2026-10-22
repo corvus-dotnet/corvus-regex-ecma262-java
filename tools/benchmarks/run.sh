@@ -20,7 +20,7 @@
 # core list to run the timed parts on; SETTLE, seconds to wait between the builds and the timed parts (0; 180 for a
 # measured run on a quiet machine); SKIP_BUILD=1 when the classes are built (the image); V8=0 for no V8 rows (the
 # central run, for every image but one), whose counts the workloads carry (v8Count); TREGEX_COMPLIANCE=1 to work out
-# TRegex's compliance again (tools/benchmarks/tregex-compliance.py, hours) rather than take
+# TRegex's compliance again (tools/benchmarks/tregex-compliance.py, twenty minutes) rather than take
 # tools/benchmarks/compliance-tregex.txt; RUN_URL, the address of the run.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/../.." && pwd)"

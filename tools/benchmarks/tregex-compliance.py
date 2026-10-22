@@ -2,7 +2,8 @@
 """TRegex's compliance over the ECMA-262 test data: tools/benchmarks/v8/dataset.mjs run by GraalVM's Node, whose RegExp
 is TRegex, with a limit of time on each record.
 
-TRegex does not answer some records of the data in any time a run can wait (the first found:
+TRegex does not answer some records of the data in any time a run can wait (25 records of backreferences.jsonl and
+captures.jsonl with GraalJS 25.4.4.1.1, each named in the output; the first found:
 backreferences.jsonl, record 909, /^(?:(?<n0>(a|-){0,0})|(?<n0>(\\k<n0>*\\4?|\\2{2}){3,3})){3,5}\\k<n0>a/u on "xx",
 which had run for minutes when it was stopped; V8 and this library answer it at once). A JavaScript engine cannot be
 stopped inside a match, so the script runs in a process of its own that writes each record's counts as it judges it;
@@ -14,7 +15,8 @@ record that reached the limit named.
     tregex-compliance.py <GraalVM's node> <data directory> [--limit seconds (30)]
 
 run.sh runs it with TREGEX_COMPLIANCE=1; otherwise it takes tools/benchmarks/compliance-tregex.txt, this script's
-output, since a run takes hours.
+output, since a run takes about twenty minutes (GraalJS compiles each pattern, and each record at the limit waits
+thirty seconds), where V8's takes fifteen seconds.
 """
 import argparse, os, select, subprocess, sys, time
 

@@ -188,9 +188,9 @@ abstract class ByteFinder {
     }
 
     /**
-     * Several literals whose bytes at one position are up to four values, each rare enough to be searched for alone
-     * ({@link #ALONE}): the search for those bytes at that position, then the literals with the byte found there
-     * compared in order. {@code Sherlock|Holmes} is found by an {@code S} or an {@code H}, as the regex crate finds
+     * Several literals whose bytes at one position are up to four values, or more within a range, each byte rare
+     * enough to be searched for alone ({@link #alone}): the search for those bytes (or that range) at that position,
+     * then the literals with the byte found there compared in order. {@code Sherlock|Holmes} is found by an {@code S} or an {@code H}, as the regex crate finds
      * {@code Sherlock|Street} by its {@code S}; the position is the one whose values are rarest.
      */
     static final class Firsts extends ByteFinder {
@@ -198,14 +198,21 @@ abstract class ByteFinder {
         final int count;
         final int a;
         final int b;
-        final int c;
-        final int d;
         /** The literals by their byte at {@code k}, in the pattern's order. */
         final byte[][][] byValue;
 
-        private Firsts(int k, int[] values, byte[][][] byValue) {
+        /** The range of bytes searched for in place of the values, where there are more than two of them. */
+        final int lo;
+        final int hi;
+
+        final int c;
+        final int d;
+
+        private Firsts(int k, int[] values, byte[][][] byValue, int lo, int hi) {
             this.k = k;
-            this.count = values.length;
+            this.lo = lo;
+            this.hi = hi;
+            this.count = lo >= 0 ? -1 : values.length;
             this.a = values[0];
             this.b = values[Math.min(1, values.length - 1)];
             this.c = values[Math.min(2, values.length - 1)];
@@ -219,23 +226,36 @@ abstract class ByteFinder {
                 shortest = Math.min(shortest, l.length);
             }
             int bestK = -1;
+            boolean bestRange = false;
             long bestCost = Long.MAX_VALUE;
             for (int k = 0; k < shortest; k++) {
                 int[] v = values(literals, k);
-                if (v.length > 4) {
-                    continue;
-                }
+                // Up to four values are tested for exactly; more as the range from the least to the greatest, where
+                // every byte in it is rare (the capital letters of a list of names), which is one test where the values
+                // would be as many. Measured, three or four values found by a range (F to T for Tom|Sawyer|Huckleberry|
+                // Finn) took 1.2 times as long as the exact tests, which pass fewer capitals.
+                boolean range = v.length > 4;
+                int from = range ? v[0] : 0;
+                int to = range ? v[v.length - 1] : -1;
                 long cost = 0;
                 boolean rare = true;
-                for (int x : v) {
-                    rare &= alone(rank, x);
-                    cost += 1L << (rank[x] / 16);
+                if (range) {
+                    for (int x = from; x <= to; x++) {
+                        rare &= alone(rank, x);
+                        cost += 1L << (rank[x] / 16);
+                    }
+                } else {
+                    for (int x : v) {
+                        rare &= alone(rank, x);
+                        cost += 1L << (rank[x] / 16);
+                    }
                 }
-                // Fewer values first (a test fewer for each), then the rarer.
-                cost += (long) v.length << 20;
+                // Exact values before a range, then the rarer.
+                cost += (range ? 2L : 1L) << 20;
                 if (rare && cost < bestCost) {
                     bestCost = cost;
                     bestK = k;
+                    bestRange = range;
                 }
             }
             if (bestK < 0) {
@@ -252,7 +272,8 @@ abstract class ByteFinder {
                 }
                 byValue[x] = with.toArray(new byte[0][]);
             }
-            return new Firsts(bestK, values, byValue);
+            return bestRange ? new Firsts(bestK, values, byValue, values[0], values[values.length - 1])
+                    : new Firsts(bestK, values, byValue, -1, -1);
         }
 
         @Override
@@ -261,12 +282,19 @@ abstract class ByteFinder {
             while (at < end) {
                 int p = count == 1 ? Swar.indexOf(h, at, end, a)
                         : count == 2 ? Swar.indexOf(h, at, end, a, b)
-                        : Swar.indexOf(h, at, end, a, b, c, d);
+                        : count > 0 ? Swar.indexOf(h, at, end, a, b, c, d)
+                        : Swar.indexOfBetween(h, at, end, lo, hi);
                 if (p < 0) {
                     return -1;
                 }
                 int start = p - k;
-                for (byte[] l : byValue[h[p] & 0xFF]) {
+                byte[][] with = byValue[h[p] & 0xFF];
+                if (with == null) {
+                    // A byte of the range no literal holds there.
+                    at = p + 1;
+                    continue;
+                }
+                for (byte[] l : with) {
                     if (Swar.startsWith(h, start, end, l)) {
                         return span(start, start + l.length);
                     }

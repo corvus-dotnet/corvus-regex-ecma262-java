@@ -148,6 +148,51 @@ final class Swar {
         return -1;
     }
 
+    /**
+     * The high bit of each lane of {@code x} that is an ASCII byte from {@code lo} to {@code hi} (both below 0x80):
+     * exact, since the seven low bits of a lane plus a constant below 0x80 cannot carry into the next lane.
+     */
+    static long between(long x, long lo, long hi) {
+        long t = x & LOW7;
+        return (t + lo) & ~(t + hi) & ~x & HIGHS;
+    }
+
+    /** The constants of {@link #between} for the bytes {@code lo} to {@code hi}. */
+    static long betweenLo(int lo) {
+        return broadcast(0x80 - lo);
+    }
+
+    static long betweenHi(int hi) {
+        return broadcast(0x7F - hi);
+    }
+
+    /** The first position at or after {@code from} and before {@code n} whose byte is from {@code lo} to {@code hi}. */
+    static int indexOfBetween(byte[] h, int from, int n, int lo, int hi) {
+        long vl = betweenLo(lo);
+        long vh = betweenHi(hi);
+        int at = from;
+        for (; at <= n - 16; at += 16) {
+            long z0 = between(word(h, at), vl, vh);
+            long z1 = between(word(h, at + 8), vl, vh);
+            if ((z0 | z1) != 0) {
+                return z0 != 0 ? at + lane(z0) : at + 8 + lane(z1);
+            }
+        }
+        for (; at <= n - 8; at += 8) {
+            long z = between(word(h, at), vl, vh);
+            if (z != 0) {
+                return at + lane(z);
+            }
+        }
+        for (; at < n; at++) {
+            int x = h[at];
+            if (x >= lo && x <= hi) {
+                return at;
+            }
+        }
+        return -1;
+    }
+
     /** Whether the bytes of {@code literal} are at {@code at} of {@code h}, before {@code end}. */
     static boolean startsWith(byte[] h, int at, int end, byte[] literal) {
         int n = literal.length;

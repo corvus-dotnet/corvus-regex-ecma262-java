@@ -76,6 +76,8 @@ final class State {
     int points;
     /** The state is in use by a match on this thread (a replacement callback can start another). */
     boolean busy;
+    /** The two words of the mask of starts the reverse automaton gives (see {@code Automata8.starts}). */
+    final long[] starts = new long[2];
 
     private static final ThreadLocal<State> STATE = ThreadLocal.withInitial(State::new);
 

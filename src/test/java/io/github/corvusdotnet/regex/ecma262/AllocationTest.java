@@ -55,6 +55,19 @@ class AllocationTest {
             {"[\\p{L}--[a-z]]+", "v"},
             {"^.*$", "m"},
             {"\\bt\\w*\\b", "gi"},
+            // The searches for where a match starts: a literal, several (packed over UTF-16), the case forms, the
+            // windows with the reverse automaton, the search after loops, the forward automaton with the skip window,
+            // and the shapes answered without the matcher.
+            {"letters", ""},
+            {"year|month|text|letters", ""},
+            {"the", "i"},
+            {"year.{0,25}month|month.{0,25}year", ""},
+            {"\\s[a-z]{0,12}ers\\s", ""},
+            {"\\w+\\s+month", ""},
+            {"\\d\\d:?\\d\\d", ""},
+            {".*", "s"},
+            {"[^\\n]*", ""},
+            {"\\p{L}", "u"},
         };
         for (String[] c : cases) {
             // With no timeout, and with one, whose clock is read as the match goes.

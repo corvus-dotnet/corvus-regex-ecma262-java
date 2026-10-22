@@ -26,6 +26,13 @@ final class Matcher8 {
      * program records, or -1 for a group that did not take part. A limit of 0 is none.
      */
     static long exec(Program p, byte[] input, int start, boolean sticky, long limitNanos, int[] caps, int capsAt) {
+        // A pattern of a simple shape with no group is answered by the search alone, with nothing of the matcher's.
+        if (p.groups == 0 && !sticky && !p.anchored) {
+            long found = shapeSearch(p, input, start);
+            if (found != NOT_A_SHAPE) {
+                return found;
+            }
+        }
         State st = State.acquire();
         try {
             return matchWith(p, st, input, start, sticky, limitNanos, caps, capsAt);
@@ -68,7 +75,516 @@ final class Matcher8 {
             st.foundAt = start;
             return run(p, st, input, start);
         }
-        return scan(p, st, input, start, need);
+        switch (p.search.plan) {
+            case WINDOWS:
+                return searchWindows(p, st, input, start, need);
+            case AFTER_LOOPS:
+                return searchAfterLoops(p, st, input, start, need);
+            default:
+                return scan(p, st, input, start, need);
+        }
+    }
+
+    /** What {@link #shapeSearch} answers for a pattern whose shape the search does not answer. */
+    static final long NOT_A_SHAPE = -4L;
+
+    /** The width of the character at a position before the end. */
+    private static int widthAt(Program p, byte[] input, int at) {
+        return (input[at] & 0xFF) < 0x80 ? 1 : Utf8.read(input, at, p.units) & 7;
+    }
+
+    /**
+     * The first match at or after {@code start} of a pattern of a simple shape, packed by {@link #span}, or NO_MATCH;
+     * {@link #NOT_A_SHAPE} for a pattern of no simple shape.
+     */
+    static long shapeSearch(Program p, byte[] input, int start) {
+        Search s = p.search;
+        if (s.shape == Search.Shape.NONE) {
+            return NOT_A_SHAPE;
+        }
+        int len = input.length;
+        int need = true ? p.need : p.need16;
+        if (start > len || len - start < need) {
+            return NO_MATCH;
+        }
+        switch (s.shape) {
+            case LITERALS: {
+                long found = s.literals.find(input, start);
+                return found < 0 ? NO_MATCH : found;
+            }
+            case FORMS:
+                return formsMatch(p, s, input, start);
+            case SET: {
+                long m = nextMember(p, s.shapeSet, input, start);
+                if (m < 0) {
+                    return NO_MATCH;
+                }
+                int at = (int) (m >>> 32);
+                return span(at, at + (int) m);
+            }
+            default:
+                return loopMatch(p, s, input, start);
+        }
+    }
+
+    /** The first match at or after {@code start} of the shape of an alternation of literals with forms. */
+    private static long formsMatch(Program p, Search s, byte[] input, int start) {
+        int len = input.length;
+        boolean units = p.units;
+        int next = start;
+        while (true) {
+            long found = s.literals.find(input, next);
+            if (found < 0) {
+                return NO_MATCH;
+            }
+            int q = (int) (found >>> 32);
+            // The automaton compares several alternatives at once where the text is ASCII; one is compared faster as
+            // it is.
+            Adfa.Anchored dfa = s.forms.length > 1 ? p.anchoredDfa : null;
+            if (dfa != null) {
+                int end = Automata8.find(dfa, input, q);
+                if (end >= 0) {
+                    return span(q, end);
+                }
+                if (end == Automata8.NONE) {
+                    next = q + widthAt(p, input, q);
+                    continue;
+                }
+            }
+            alternatives:
+            for (int[][] alt : s.forms) {
+                int at = q;
+                for (int[] f : alt) {
+                    if (at >= len) {
+                        continue alternatives;
+                    }
+                    int c = (input[at] & 0xFF);
+                    int r;
+                    int w;
+                    if (c < 0x80) {
+                        r = c;
+                        w = 1;
+                    } else {
+                        int rw = Utf8.read(input, at, units);
+                        r = rw >> 3;
+                        w = rw & 7;
+                    }
+                    boolean has = false;
+                    for (int x : f) {
+                        has |= x == r;
+                    }
+                    if (!has) {
+                        continue alternatives;
+                    }
+                    at += w;
+                }
+                return span(q, at);
+            }
+            next = q + widthAt(p, input, q);
+        }
+    }
+
+    /** The first match at or after {@code start} of the shape of one greedy loop of a class. */
+    private static long loopMatch(Program p, Search s, byte[] input, int start) {
+        int from = start;
+        if (s.shapeMin != 0) {
+            long m = nextMember(p, s.shapeSet, input, start);
+            if (m < 0) {
+                return NO_MATCH;
+            }
+            from = (int) (m >>> 32);
+        }
+        int to = runEnd(s, input, from);
+        return span(from, to >= 0 ? to : endOfRun(p, s.shapeSet, input, from));
+    }
+
+    /** The end of the run of the loop's members that starts at {@code at}, or -1 to find it a member at a time. */
+    private static int runEnd(Search s, byte[] input, int at) {
+        int n = input.length;
+        switch (s.runEnd) {
+            case ALL:
+                return n;
+            case STOPS: {
+                int f = s.stops == 1 ? Swar.indexOf(input, at, n, s.stop0)
+                        : s.stops == 2 ? Swar.indexOf(input, at, n, s.stop0, s.stop1)
+                        : Swar.indexOf(input, at, n, s.stop0, s.stop1, s.stop2);
+                return f < 0 ? n : f;
+            }
+            case LINE: {
+                int k = at;
+                while (true) {
+                    int j = Swar.indexOf(input, k, n, '\n', '\r', 0xE2);
+                    if (j < 0) {
+                        return n;
+                    }
+                    if ((input[j] & 0xFF) != 0xE2
+                            || j + 2 < n && (input[j + 1] & 0xFF) == 0x80 && ((input[j + 2] & 0xFF) | 1) == 0xA9) {
+                        return j;
+                    }
+                    k = j + 1;
+                }
+            }
+            default:
+                return -1;
+        }
+    }
+
+    /** The first member of the set at or after {@code at}, packed as {@code at << 32 | width}; -1 for none. */
+    private static long nextMember(Program p, CharSet set, byte[] input, int at) {
+        Search.FirstBytes fb = p.search.firstBytes;
+        int len = input.length;
+        while (true) {
+            if (fb != null) {
+                at = fb.find(input, at);
+                if (at < 0) {
+                    return -1;
+                }
+            }
+            if (at >= len) {
+                return -1;
+            }
+            int c = (input[at] & 0xFF);
+            if (c < 0x80) {
+                if (set.hasAscii(c)) {
+                    return (long) at << 32 | 1;
+                }
+                at++;
+            } else {
+                int rw = Utf8.read(input, at, p.units);
+                if (set.contains(rw >> 3)) {
+                    return (long) at << 32 | (rw & 7);
+                }
+                at += rw & 7;
+            }
+        }
+    }
+
+    /** Whether a start passes the first set. */
+    private static boolean firstAllows(Program p, byte[] input, int at) {
+        CharSet first = p.first;
+        if (first == null) {
+            return true;
+        }
+        if (at >= input.length) {
+            return false;
+        }
+        int c = (input[at] & 0xFF);
+        return c < 0x80 ? first.hasAscii(c) : first.contains(Utf8.read(input, at, p.units) >> 3);
+    }
+
+    /** Tries the start: whether the program matches there (with the match in {@code st}), the reason for stopping in st.stop. */
+    private static boolean tryAt(Program p, State st, byte[] input, int at) {
+        if (firstAllows(p, input, at) && run(p, st, input, at)) {
+            st.foundAt = at;
+            return true;
+        }
+        return false;
+    }
+
+    /** Whether nothing from the occurrence at {@code q} on can match, by the check's automaton while it pays. */
+    private static boolean rulesOut(Search.RestCheck r, byte[] input, int q) {
+        if (r == null || !r.pays()) {
+            return false;
+        }
+        boolean out = Automata8.matchesAt(r.dfa, input, q) == 0;
+        r.count(out);
+        return out;
+    }
+
+    /**
+     * The position {@code n} characters before {@code at}, not before {@code floor} (the furthest it gets when there are
+     * fewer), packed as {@code position << 32 | characters}.
+     */
+    private static long walkBack(Program p, byte[] input, int at, int n, int floor) {
+        int k = 0;
+        while (k < n && at > floor) {
+            int w = Utf8.readLast(input, at, p.units) & 7;
+            if (at - w < floor) {
+                break;
+            }
+            at -= w;
+            k++;
+        }
+        return (long) at << 32 | k;
+    }
+
+    /**
+     * The search of a pattern each of whose matches holds one of the literals {@code lo} to {@code hi} characters after
+     * its start: each occurrence opens the window of starts that could reach it, tried in order and never twice.
+     */
+    private static boolean searchWindows(Program p, State st, byte[] input, int start, int need) {
+        Search s = p.search;
+        if (s.reverse != null && s.hi < 127) {
+            int found = searchReverse(p, st, input, start, need);
+            if (found != REVERSE_BAIL) {
+                return found == 1;
+            }
+        }
+        int len = input.length;
+        Literals literals = s.literals;
+        int lo = s.lo;
+        int hi = s.hi;
+        int next = start;
+        // Every start before this has been tried.
+        int untried = start;
+        while (true) {
+            long found = literals.find(input, next);
+            if (found < 0) {
+                return false;
+            }
+            int q = (int) (found >>> 32);
+            next = q + widthAt(p, input, q);
+            if (hi == 0) {
+                // Every alternative starts with its literal: the match starts at the occurrence or not at all.
+                if (len - q < need) {
+                    return false;
+                }
+                if (p.afterLiteral != null) {
+                    // The occurrence is the literal every match starts with: the automaton goes on after it.
+                    int end = Automata8.findAfter(p.anchoredDfa, input, q, q + p.afterLiteralLength, p.afterLiteral);
+                    if (end >= 0) {
+                        st.foundAt = q;
+                        st.end = end;
+                        return true;
+                    }
+                    if (end == Automata8.NONE) {
+                        continue;
+                    }
+                }
+                if (tryAt(p, st, input, q)) {
+                    return true;
+                }
+                if (st.stop != State.STOP_NONE) {
+                    return false;
+                }
+                continue;
+            }
+            long lb = walkBack(p, input, q, lo, start);
+            int last = (int) (lb >>> 32);
+            if ((int) lb < lo || last < untried || rulesOut(s.rest, input, q)) {
+                continue;
+            }
+            int at = (int) (walkBack(p, input, q, hi, start) >>> 32);
+            while (at <= last) {
+                if (at >= untried) {
+                    if (len - at < need) {
+                        return false;
+                    }
+                    if (tryAt(p, st, input, at)) {
+                        return true;
+                    }
+                    if (st.stop != State.STOP_NONE) {
+                        return false;
+                    }
+                }
+                if (at == len) {
+                    break;
+                }
+                at += widthAt(p, input, at);
+            }
+            untried = Math.max(untried, at);
+        }
+    }
+
+    /** What {@link #searchReverse} answers where a unit beyond ASCII is reached, for the plain search to be made. */
+    private static final int REVERSE_BAIL = -1;
+
+    /**
+     * {@link #searchWindows} with the terms before the anchors read backwards from each occurrence, so that only the
+     * starts they allow are tried: 1 for a match (in {@code st}), 0 for none, {@link #REVERSE_BAIL} when a unit beyond
+     * ASCII is reached. A start is tried only once no later occurrence could allow an earlier one (it is before the next
+     * occurrence's window), so the starts are tried in order across occurrences and the first match is the leftmost.
+     */
+    private static int searchReverse(Program p, State st, byte[] input, int start, int need) {
+        Search s = p.search;
+        Literals literals = s.literals;
+        int lo = s.lo;
+        int hi = s.hi;
+        int len = input.length;
+        // The starts waiting to be tried, as two words of bits: bit k is the position base + k.
+        long pend0 = 0;
+        long pend1 = 0;
+        int base = start;
+        // Every start at or before this has been tried, or can no longer be allowed.
+        int tried = -1;
+        long found = literals.find(input, start);
+        if (found < 0) {
+            return 0;
+        }
+        int q = (int) (found >>> 32);
+        long[] mask = st.starts;
+        while (true) {
+            // The starts this occurrence's terms allow join those waiting.
+            int newBase = Math.max(q - hi, start);
+            if (newBase > base) {
+                int shift = newBase - base;
+                if (shift >= 128) {
+                    pend0 = 0;
+                    pend1 = 0;
+                } else if (shift >= 64) {
+                    pend0 = pend1 >>> (shift - 64);
+                    pend1 = 0;
+                } else {
+                    pend0 = pend0 >>> shift | pend1 << (64 - shift);
+                    pend1 >>>= shift;
+                }
+                base = newBase;
+            }
+            // An occurrence from which nothing can match allows no start.
+            long m0 = 0;
+            long m1 = 0;
+            if (!rulesOut(s.rest, input, q)) {
+                if (!Automata8.starts(s.reverse, input, q, hi, start, mask)) {
+                    return REVERSE_BAIL;
+                }
+                m0 = mask[0];
+                m1 = mask[1];
+            }
+            // No start nearer than lo characters.
+            if (lo >= 64) {
+                m0 = 0;
+                m1 &= -1L << (lo - 64);
+            } else if (lo > 0) {
+                m0 &= -1L << lo;
+            }
+            while ((m0 | m1) != 0) {
+                int d;
+                if (m1 != 0) {
+                    d = 127 - Long.numberOfLeadingZeros(m1);
+                    m1 &= ~(1L << (d - 64));
+                } else {
+                    d = 63 - Long.numberOfLeadingZeros(m0);
+                    m0 &= ~(1L << d);
+                }
+                int at = q - d;
+                if (at >= base && at > tried) {
+                    int b = at - base;
+                    if (b < 64) {
+                        pend0 |= 1L << b;
+                    } else {
+                        pend1 |= 1L << (b - 64);
+                    }
+                }
+            }
+            int after = q + widthAt(p, input, q);
+            // The earliest waiting start is tried once no occurrence before it plus the window could allow an earlier
+            // one: an occurrence within that reach is taken in first, which looks no further than the reach.
+            boolean taken = false;
+            while ((pend0 | pend1) != 0) {
+                int k = pend0 != 0 ? Long.numberOfTrailingZeros(pend0) : 64 + Long.numberOfTrailingZeros(pend1);
+                int at = base + k;
+                if (after <= at + hi) {
+                    int q2 = literals.findWithin(input, after, at + hi);
+                    if (q2 >= 0) {
+                        q = q2;
+                        taken = true;
+                        break;
+                    }
+                }
+                if (k < 64) {
+                    pend0 &= ~(1L << k);
+                } else {
+                    pend1 &= ~(1L << (k - 64));
+                }
+                tried = at;
+                if (len - at < need) {
+                    return 0;
+                }
+                if (tryAt(p, st, input, at)) {
+                    return 1;
+                }
+                if (st.stop != State.STOP_NONE) {
+                    return 0;
+                }
+            }
+            if (!taken) {
+                long f2 = literals.find(input, after);
+                if (f2 < 0) {
+                    return 0;
+                }
+                q = (int) (f2 >>> 32);
+            }
+        }
+    }
+
+    /**
+     * The search of a pattern each of whose matches is runs of the loops' sets, then the literal: the runs before each
+     * occurrence are walked back to the earliest start, the only one tried for it.
+     */
+    private static boolean searchAfterLoops(Program p, State st, byte[] input, int start, int need) {
+        Search s = p.search;
+        CharSet[] sets = s.sets;
+        int[] mins = s.mins;
+        int len = input.length;
+        boolean units = p.units;
+        int next = start;
+        int tried = -1;
+        occurrences:
+        while (true) {
+            long found = s.literals.find(input, next);
+            if (found < 0) {
+                return false;
+            }
+            int q = (int) (found >>> 32);
+            next = q + widthAt(p, input, q);
+            // A loop that needs a member must have one just before the occurrence: a test of one character, made before
+            // the rest is checked.
+            int last = sets.length - 1;
+            if (mins[last] == 1) {
+                if (q <= start) {
+                    continue;
+                }
+                int c = (input[q - 1] & 0xFF);
+                int r = c < 0x80 ? c : Utf8.readLast(input, q, units) >> 3;
+                if (!sets[last].contains(r)) {
+                    continue;
+                }
+            }
+            if (rulesOut(s.rest, input, q)) {
+                continue;
+            }
+            int at = q;
+            for (int k = sets.length - 1; k >= 0; k--) {
+                int runEnd = at;
+                while (at > start) {
+                    int c = (input[at - 1] & 0xFF);
+                    int r;
+                    int w;
+                    if (c < 0x80) {
+                        r = c;
+                        w = 1;
+                    } else {
+                        int rw = Utf8.readLast(input, at, units);
+                        r = rw >> 3;
+                        w = rw & 7;
+                    }
+                    if (!sets[k].contains(r) || at - w < start) {
+                        break;
+                    }
+                    at -= w;
+                }
+                if (mins[k] == 1 && at == runEnd) {
+                    continue occurrences;
+                }
+            }
+            if (at <= tried) {
+                continue;
+            }
+            if (len - at < need) {
+                return false;
+            }
+            if (tryAt(p, st, input, at)) {
+                return true;
+            }
+            if (st.stop != State.STOP_NONE) {
+                return false;
+            }
+            tried = at;
+            if (sets.length == 1) {
+                // Every occurrence in the rest of the loop's run walks back to the start just tried.
+                next = Math.max(next, endOfRun(p, sets[0], input, q));
+            }
+        }
     }
 
     /** Tries every start from {@code start} that the first set allows. */
@@ -79,10 +595,18 @@ final class Matcher8 {
         Search search = p.search;
         Adfa.Anchored forward = p.forward();
         Adfa.Skip skip = p.skip;
+        Search.FirstBytes fb = search.firstBytes;
         int at = start;
         while (true) {
             if (skip != null) {
                 at = Automata8.skipAhead(skip, input, at);
+            }
+            if (fb != null) {
+                // Every match starts with a member of the first set, which starts with one of these bytes.
+                at = fb.find(input, at);
+                if (at < 0) {
+                    return false;
+                }
             }
             if (len - at < need) {
                 return false;

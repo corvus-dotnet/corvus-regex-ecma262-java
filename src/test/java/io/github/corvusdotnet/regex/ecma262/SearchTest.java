@@ -134,6 +134,81 @@ class SearchTest {
         }
     }
 
+    /** A literal with a byte rare in text is found by the search for that byte, wherever in the literal it is. */
+    @Test
+    void aLiteralWithARareByteIsFoundAsAnyOther() {
+        SearchPrimitivesTest.Xorshift seed = new SearchPrimitivesTest.Xorshift(0x2f6b1c3d);
+        for (String literal : new String[] {"zqj", "aqj", "qq", "Xa", "abZ", "jj j"}) {
+            Regex re = Regex.compile(literal, "g");
+            for (int round = 0; round < 200; round++) {
+                StringBuilder t = new StringBuilder();
+                for (int k = seed.below(200); k > 0; k--) {
+                    t.append("abqjzZX ".charAt(seed.below(8)));
+                }
+                String text = t.toString();
+                List<Integer> want = new ArrayList<>();
+                for (int i = text.indexOf(literal); i >= 0; i = text.indexOf(literal, i + literal.length())) {
+                    want.add(i);
+                }
+                List<Integer> got = new ArrayList<>();
+                List<Integer> got8 = new ArrayList<>();
+                for (Match m : re.findAll(text)) {
+                    got.add(m.start());
+                }
+                for (Match m : re.findAll(Utf8Text.of(text))) {
+                    got8.add(m.start());
+                }
+                assertEquals(want, got, "/" + literal + "/ in " + text);
+                assertEquals(want, got8, "/" + literal + "/ in " + text + " over UTF-8");
+            }
+        }
+    }
+
+    /**
+     * {@code .*} with the s flag is answered without reading the text: from where the search starts (a code point's
+     * start with the u or v flag, so a start between the halves of a pair moves back to the pair's start; any code unit
+     * without them) to the end. Each answer is compared with the matcher's, which a group in the pattern makes the
+     * search use, and with that rule written out, over UTF-16 text with lone halves anywhere, the last unit among them,
+     * and every start ({@code a_run_of_the_dot_with_the_s_flag_is_the_rest_of_the_text} of the crate's api.rs).
+     */
+    @Test
+    void aRunOfTheDotWithTheSFlagIsTheRestOfTheText() {
+        String[] texts = {"", "a\uD800", "a\uDC00", "\uDC00a\uD83D\uDE00", "\uD83D\uDE00",
+            "\uDC00b\uD83D\uDE00\uD800c\uDBFF"};
+        for (String flags : new String[] {"s", "su", "sv", "sy", "suy"}) {
+            boolean unicode = flags.contains("u") || flags.contains("v");
+            Regex shortcut = Regex.compile(".*", flags);
+            Regex matcher = Regex.compile("(.*)", flags);
+            Regex plus = Regex.compile(".+", flags);
+            Regex plusMatcher = Regex.compile("(.+)", flags);
+            assertEquals(Search.Shape.LOOP, shortcut.prog.search.shape);
+            for (String text : texts) {
+                for (int start = 0; start <= text.length(); start++) {
+                    boolean midPair = start > 0 && start < text.length() && Character.isLowSurrogate(text.charAt(start))
+                            && Character.isHighSurrogate(text.charAt(start - 1));
+                    int from = unicode && midPair ? start - 1 : start;
+                    String where = "/.*/" + flags + " over " + text + " from " + start;
+                    assertEquals(spanOf(matcher.find(text, start)), spanOf(shortcut.find(text, start)), where);
+                    assertEquals(List.of(from, text.length()), spanOf(shortcut.find(text, start)), where);
+                    assertEquals(spanOf(plusMatcher.find(text, start)), spanOf(plus.find(text, start)), where);
+                    assertEquals(from < text.length() ? List.of(from, text.length()) : null,
+                            spanOf(plus.find(text, start)), where);
+                }
+                // The global search: the rest of the text, then the empty match at its end.
+                List<Integer> all = spans(shortcut.findAll(text));
+                assertEquals(spans(matcher.findAll(text)), all, "/.*/" + flags + " global over " + text);
+                if (!flags.contains("y")) {
+                    assertEquals(text.isEmpty() ? List.of(0, 0) : List.of(0, text.length(), text.length(), text.length()),
+                            all, "/.*/" + flags + " global over " + text);
+                }
+            }
+        }
+    }
+
+    static List<Integer> spanOf(Match m) {
+        return m == null ? null : List.of(m.start(), m.end());
+    }
+
     /** The forward automaton and the window of the skip are taken where the plan is the scan, and not without it. */
     @Test
     void theForwardAutomatonIsKeptForTheScan() {

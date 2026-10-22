@@ -77,8 +77,13 @@ final class Matcher16 {
         boolean units = p.units;
         CharSet first = p.first;
         Search search = p.search;
+        Adfa.Anchored forward = p.forward();
+        Adfa.Skip skip = p.skip;
         int at = start;
         while (true) {
+            if (skip != null) {
+                at = Automata16.skipAhead(skip, input, at);
+            }
             if (len - at < need) {
                 return false;
             }
@@ -102,6 +107,25 @@ final class Matcher16 {
                 at = Math.max(endOfRun(p, first, input, at), at + w);
                 continue;
             }
+            if (forward != null) {
+                // One pass of the forward automaton from here says where a match first ends, or that none starts
+                // before a place where no thread is alive; only then are starts tried, from here to there.
+                long found = Automata16.scan(forward, input, at);
+                long kind = found & ~0xFFFFFFFFL;
+                if (kind == Automata16.SCAN_NONE) {
+                    return false;
+                }
+                if (kind == Automata16.SCAN_IDLE) {
+                    at = (int) found;
+                    continue;
+                }
+                int next = tryStarts(p, st, input, at, (int) found);
+                if (next < 0) {
+                    return next == FOUND;
+                }
+                at = next;
+                continue;
+            }
             if ((first == null || first.contains(r)) && run(p, st, input, at)) {
                 st.foundAt = at;
                 return true;
@@ -117,6 +141,49 @@ final class Matcher16 {
             }
             at += w;
         }
+    }
+
+    /** What {@link #tryStarts} answers when a start matched, and when none did and the search is over. */
+    private static final int FOUND = -1;
+    private static final int OVER = -2;
+
+    /**
+     * Tries the starts from {@code at} to {@code last} in order, as the plain search would: {@link #FOUND} (the match in
+     * {@code st}), {@link #OVER} when the search is over without one, or where the starts ran out.
+     */
+    private static int tryStarts(Program p, State st, String input, int at, int last) {
+        int len = input.length();
+        CharSet first = p.first;
+        while (at <= last && at <= len) {
+            if (!p.units && Utf16.midPair(input, at)) {
+                at++;
+                continue;
+            }
+            if (at == len) {
+                st.foundAt = at;
+                return first == null && run(p, st, input, at) ? FOUND : OVER;
+            }
+            int c = input.charAt(at);
+            int r;
+            int w;
+            if (c < 0x80) {
+                r = c;
+                w = 1;
+            } else {
+                int rw = Utf16.read(input, at, p.units);
+                r = rw >> 3;
+                w = rw & 7;
+            }
+            if ((first == null || first.contains(r)) && run(p, st, input, at)) {
+                st.foundAt = at;
+                return FOUND;
+            }
+            if (st.stop != State.STOP_NONE) {
+                return OVER;
+            }
+            at += w;
+        }
+        return at;
     }
 
     /** The end of the run of members of the set from {@code at}. */
@@ -183,6 +250,17 @@ final class Matcher16 {
      * limit it returns false with the reason in {@code st.stop}.
      */
     static boolean run(Program p, State st, String input, int start) {
+        Adfa.Anchored dfa = p.anchoredDfa;
+        if (dfa != null) {
+            int end = Automata16.find(dfa, input, start);
+            if (end >= 0) {
+                st.end = end;
+                return true;
+            }
+            if (end == Automata16.NONE) {
+                return false;
+            }
+        }
         st.sp = 0;
         return runOn(p, st, input, start);
     }

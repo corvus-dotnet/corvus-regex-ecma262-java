@@ -84,6 +84,9 @@ final class Compiler {
         p.pointLoops = c.pointLoops.toArray();
         p.pointMins = c.pointMins.toArray();
         p.points = p.pointLoops.length / Program.MAX_MEMO_LOOPS;
+        if (p.groups == 0 && !backrefs) {
+            p.anchoredDfa = Adfa.build(root);
+        }
         if (!p.anchored) {
             IntList pairs = new IntList();
             int nullable = firstChars(root, pairs);
@@ -91,8 +94,33 @@ final class Compiler {
                 p.first = CharSet.of(pairs, false);
             }
             p.search = Search.plan(root, backrefs, p.first, !unicode);
+            byte[] literal = p.search.singleUtf8();
+            if (p.search.windowsAtZero() && p.anchoredDfa != null && literal != null) {
+                p.afterLiteral = p.anchoredDfa.after(literal);
+                p.afterLiteralLength = literal.length;
+            }
+            // The tree is kept, and later built from, on the thread that searches, whose stack may be small: only a
+            // shallow one is kept.
+            if (!Search.noSearch() && !backrefs && shallowerThan(root, 64) && p.search.plan == Search.Plan.SCAN
+                    && p.search.shape == Search.Shape.NONE) {
+                p.forwardRoot = root;
+                p.skip = Adfa.skipWindow(root);
+            }
         }
         return p;
+    }
+
+    /** Whether the tree under {@code n} is less than {@code limit} levels deep. */
+    static boolean shallowerThan(Node n, int limit) {
+        if (limit <= 0) {
+            return false;
+        }
+        for (Node s : n.subs) {
+            if (!shallowerThan(s, limit - 1)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

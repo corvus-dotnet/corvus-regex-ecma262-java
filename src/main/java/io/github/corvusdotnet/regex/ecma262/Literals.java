@@ -73,15 +73,15 @@ final class Literals {
         this.single8 = bytes.length == 1 ? bytes[0] : null;
         this.longest = longest;
         this.all16 = strings;
-        this.one16 = strings.length == 1 ? strings[0] : null;
+        this.one16 = null;
         char first = strings[0].charAt(0);
         boolean shared = strings.length > 1 && strings.length <= 4 && first < 0x80 && ByteFinder.rare(first);
         for (String s : strings) {
             shared &= s.charAt(0) == first;
         }
-        this.hasShared16 = shared;
+        this.hasShared16 = false;
         this.shared16 = first;
-        if (strings.length > 1 && !shared && longest < PACKED_LONGEST) {
+        if (longest < PACKED_LONGEST) {
             // The low byte of each unit, as the packed text holds it.
             List<byte[]> low = new ArrayList<>();
             for (String s : strings) {
@@ -97,7 +97,7 @@ final class Literals {
                     low.add(b);
                 }
             }
-            this.packed16 = ByteFinder.of(low.toArray(new byte[0][]), fingerprint);
+            this.packed16 = ByteFinder.of(low.toArray(new byte[0][]), fingerprint, ByteFinder.packedRanks(strings));
         } else {
             this.packed16 = null;
         }

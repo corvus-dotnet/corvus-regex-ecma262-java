@@ -46,13 +46,6 @@ abstract class ByteFinder {
     };
 
     /**
-     * The bytes rare enough in text that a search for one of them, and a compare where it is found, is faster than the
-     * search for a literal's two rarest bytes, from the rarest: measured over the Industry texts, one in a thousand bytes
-     * or fewer ({@code VERY_RARE} of {@code search.rs}).
-     */
-    private static final byte[] VERY_RARE = "ZXQKVJzqjx".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-
-    /**
      * Whether a byte is rare enough in text for a search for it alone to pay: not a lower case letter (but the rarest
      * five), a space or the commonest punctuation, nor a byte beyond ASCII, where the lead bytes of a script are common.
      */
@@ -66,53 +59,82 @@ abstract class ByteFinder {
         return "jqxzk".indexOf(b) >= 0;
     }
 
-    /** The search for the literals, in the pattern's order. */
+    /**
+     * The rank under which a byte is searched for alone (the capital letters, the digits and the rarest lower case
+     * letters): over SWAR the search for one byte reads three times as fast as the pair search, so a byte this rare
+     * pays for the compares where it is found.
+     */
+    static final int ALONE = 200;
+
+    /** The search for the literals over UTF-8, in the pattern's order. */
     static ByteFinder of(byte[][] literals, boolean fingerprint) {
+        return of(literals, fingerprint, RANK);
+    }
+
+    /**
+     * Whether a byte is rare enough to be searched for alone: one {@link #rare} names (the Rust crate's rule), and one
+     * the ranks do not mark common (a byte a UTF-16 literal's unit beyond ASCII packs to, which {@link #packedRanks}
+     * marks).
+     */
+    private static boolean alone(int[] rank, int b) {
+        return b < 0x80 && rare(b) && rank[b] <= ALONE;
+    }
+
+    /**
+     * The search for the literals, in the pattern's order, with how common each byte is ({@link #RANK} over UTF-8, and
+     * the ranks of {@link #packedRanks} for the low bytes of UTF-16 units).
+     */
+    static ByteFinder of(byte[][] literals, boolean fingerprint, int[] rank) {
         if (literals.length == 1) {
             byte[] l = literals[0];
             if (l.length == 1) {
                 return new One(l[0]);
             }
-            int best = -1;
-            for (int k = 0; k < l.length; k++) {
-                int order = indexOf(VERY_RARE, l[k]);
-                if (order >= 0 && (best < 0 || order < indexOf(VERY_RARE, l[best]))) {
+            // The rarest byte, searched for alone where it is rare enough; the pair search where every byte is common.
+            int best = 0;
+            for (int k = 1; k < l.length; k++) {
+                if (rank[l[k] & 0xFF] < rank[l[best] & 0xFF]) {
                     best = k;
                 }
             }
-            if (best >= 0) {
+            if (alone(rank, l[best] & 0xFF)) {
                 return new Rare(l, best);
             }
-            Pair pair = Pair.of(literals);
+            Pair pair = Pair.of(literals, rank);
             if (pair != null) {
                 return pair;
             }
             return Table.of(literals);
         }
-        // Up to four literals that start with the same rare byte are found by the search for that byte and a compare of
-        // each (Sherlock|Street, as the regex crate finds them).
-        int first = literals[0].length > 0 ? literals[0][0] & 0xFF : -1;
-        boolean oneRareFirst = first >= 0 && rare(first);
-        for (byte[] l : literals) {
-            oneRareFirst &= l.length > 0 && (l[0] & 0xFF) == first;
+        Firsts firsts = Firsts.of(literals, rank);
+        if (firsts != null) {
+            return firsts;
         }
-        if (!fingerprint && oneRareFirst && literals.length <= 4) {
-            return new Shared((byte) first, literals);
-        }
-        Pair pair = Pair.of(literals);
+        Pair pair = Pair.of(literals, rank);
         if (pair != null) {
             return pair;
         }
-        return Table.of(literals);
+        return Table.of(literals, rank);
     }
 
-    private static int indexOf(byte[] a, byte b) {
-        for (int k = 0; k < a.length; k++) {
-            if (a[k] == b) {
-                return k;
+    /**
+     * How common each low byte of the units of UTF-16 literals is in the packed text: an ASCII unit's byte as {@link
+     * #RANK} has it, and a byte any of the literals' units beyond ASCII packs to as common (a Cyrillic letter in Russian
+     * text) or nearly so (a Han character, whose low byte any of thousands share), so that neither is searched for
+     * alone or taken for a rare position.
+     */
+    static int[] packedRanks(String[] literals) {
+        int[] rank = RANK.clone();
+        for (String l : literals) {
+            for (int i = 0; i < l.length(); i++) {
+                char u = l.charAt(i);
+                if (u >= 0x80) {
+                    int b = u & 0xFF;
+                    rank[b] = Math.max(rank[b], u >= 0x400 && u <= 0x4FF ? 245 : 230);
+                }
             }
         }
-        return -1;
+        return rank;
     }
 
     /** A literal of one byte. */
@@ -165,27 +187,88 @@ abstract class ByteFinder {
         }
     }
 
-    /** A few literals that all start with one rare byte: the search for the byte, then each literal compared in order. */
-    static final class Shared extends ByteFinder {
-        final byte first;
-        final byte[][] literals;
+    /**
+     * Several literals whose bytes at one position are up to four values, each rare enough to be searched for alone
+     * ({@link #ALONE}): the search for those bytes at that position, then the literals with the byte found there
+     * compared in order. {@code Sherlock|Holmes} is found by an {@code S} or an {@code H}, as the regex crate finds
+     * {@code Sherlock|Street} by its {@code S}; the position is the one whose values are rarest.
+     */
+    static final class Firsts extends ByteFinder {
+        final int k;
+        final int count;
+        final int a;
+        final int b;
+        final int c;
+        final int d;
+        /** The literals by their byte at {@code k}, in the pattern's order. */
+        final byte[][][] byValue;
 
-        Shared(byte first, byte[][] literals) {
-            this.first = first;
-            this.literals = literals;
+        private Firsts(int k, int[] values, byte[][][] byValue) {
+            this.k = k;
+            this.count = values.length;
+            this.a = values[0];
+            this.b = values[Math.min(1, values.length - 1)];
+            this.c = values[Math.min(2, values.length - 1)];
+            this.d = values[Math.min(3, values.length - 1)];
+            this.byValue = byValue;
+        }
+
+        static Firsts of(byte[][] literals, int[] rank) {
+            int shortest = Integer.MAX_VALUE;
+            for (byte[] l : literals) {
+                shortest = Math.min(shortest, l.length);
+            }
+            int bestK = -1;
+            long bestCost = Long.MAX_VALUE;
+            for (int k = 0; k < shortest; k++) {
+                int[] v = values(literals, k);
+                if (v.length > 4) {
+                    continue;
+                }
+                long cost = 0;
+                boolean rare = true;
+                for (int x : v) {
+                    rare &= alone(rank, x);
+                    cost += 1L << (rank[x] / 16);
+                }
+                // Fewer values first (a test fewer for each), then the rarer.
+                cost += (long) v.length << 20;
+                if (rare && cost < bestCost) {
+                    bestCost = cost;
+                    bestK = k;
+                }
+            }
+            if (bestK < 0) {
+                return null;
+            }
+            int[] values = values(literals, bestK);
+            byte[][][] byValue = new byte[256][][];
+            for (int x : values) {
+                List<byte[]> with = new ArrayList<>();
+                for (byte[] l : literals) {
+                    if ((l[bestK] & 0xFF) == x) {
+                        with.add(l);
+                    }
+                }
+                byValue[x] = with.toArray(new byte[0][]);
+            }
+            return new Firsts(bestK, values, byValue);
         }
 
         @Override
         long find(byte[] h, int from, int end) {
-            int at = from;
+            int at = from + k;
             while (at < end) {
-                int p = Swar.indexOf(h, at, end, first);
+                int p = count == 1 ? Swar.indexOf(h, at, end, a)
+                        : count == 2 ? Swar.indexOf(h, at, end, a, b)
+                        : Swar.indexOf(h, at, end, a, b, c, d);
                 if (p < 0) {
                     return -1;
                 }
-                for (byte[] l : literals) {
-                    if (Swar.startsWith(h, p, end, l)) {
-                        return span(p, p + l.length);
+                int start = p - k;
+                for (byte[] l : byValue[h[p] & 0xFF]) {
+                    if (Swar.startsWith(h, start, end, l)) {
+                        return span(start, start + l.length);
                     }
                 }
                 at = p + 1;
@@ -306,6 +389,10 @@ abstract class ByteFinder {
          * of their positions take {@link #MOST_TESTS} tests or fewer each.
          */
         static Pair of(byte[][] literals) {
+            return of(literals, RANK);
+        }
+
+        static Pair of(byte[][] literals, int[] ranks) {
             int shortest = Integer.MAX_VALUE;
             for (byte[] l : literals) {
                 shortest = Math.min(shortest, l.length);
@@ -321,7 +408,7 @@ abstract class ByteFinder {
                 values[k] = values(literals, k);
                 tests[k] = tests(values[k], MOST_TESTS);
                 for (int v : values[k]) {
-                    rank[k] = Math.max(rank[k], RANK[v]);
+                    rank[k] = Math.max(rank[k], ranks[v]);
                 }
             }
             // The pair of the rarest positions, their values apart where any pair has them apart (a run of one byte
@@ -400,11 +487,14 @@ abstract class ByteFinder {
             return -1;
         }
 
-        /** The lanes of a word that pass the tests. */
+        /**
+         * The lanes of a word that pass the tests, by the cheap test of {@link Swar#hasZero}, which may flag a lane that
+         * does not pass but never misses one: every candidate is compared with the literals.
+         */
         private static long pass(long x, long[] m, long[] v) {
-            long out = Swar.eq(x | m[0], v[0]);
+            long out = Swar.hasZero((x | m[0]) ^ v[0]);
             for (int k = 1; k < m.length; k++) {
-                out |= Swar.eq(x | m[k], v[k]);
+                out |= Swar.hasZero((x | m[k]) ^ v[k]);
             }
             return out;
         }
@@ -424,7 +514,8 @@ abstract class ByteFinder {
                 long mj0 = mj[0];
                 long vj0 = vj[0];
                 while (at <= blocks) {
-                    long m = Swar.eq(Swar.word(h, at + i) | mi0, vi0) & Swar.eq(Swar.word(h, at + j) | mj0, vj0);
+                    long m = Swar.hasZero((Swar.word(h, at + i) | mi0) ^ vi0)
+                            & Swar.hasZero((Swar.word(h, at + j) | mj0) ^ vj0);
                     while (m != 0) {
                         int s = at + Swar.lane(m);
                         if (s <= last) {
@@ -483,6 +574,10 @@ abstract class ByteFinder {
         }
 
         static Table of(byte[][] literals) {
+            return of(literals, RANK);
+        }
+
+        static Table of(byte[][] literals, int[] rank) {
             int shortest = Integer.MAX_VALUE;
             for (byte[] l : literals) {
                 shortest = Math.min(shortest, l.length);
@@ -492,7 +587,7 @@ abstract class ByteFinder {
             for (int k = 0; k < shortest; k++) {
                 long cost = 0;
                 for (int v : values(literals, k)) {
-                    cost += 1L << (RANK[v] / 16);
+                    cost += 1L << (rank[v] / 16);
                 }
                 if (cost < bestCost) {
                     bestCost = cost;

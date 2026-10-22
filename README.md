@@ -22,9 +22,10 @@ Regular expressions with the grammar and the answers of ECMA-262, the `RegExp` o
 
 - Two modes of searching for where a match can start. By default the library's own searches, which read a text
   eight bytes at a time and need nothing of the JVM. Started with `--add-modules jdk.incubator.vector`, the JVM gives
-  the library the Vector API, and it searches a vector at a time (32 bytes with AVX2). The module is incubating in
-  every JDK so far, so adding it is how a program opts in; without it, nothing of the Vector API is loaded. Both modes
-  give the same answers, and CI runs everything in each.
+  the library the Vector API, and from JDK 21 on it searches a vector at a time (32 bytes with AVX2); on JDK 17,
+  whose JIT allocated for the Vector API's masks, it stays with its own. The module is incubating in every JDK so
+  far, so adding it is how a program opts in; without it, nothing of the Vector API is loaded. Both modes give the
+  same answers, and CI runs everything in each.
 
 **Compliance.** Over the [ECMA-262 test data](https://github.com/corvus-dotnet/ecma262-regex-test-data) (what V8
 says about 117,889 patterns and 5,884,566 texts, test262's and `exec`, the global search, `replace` and `split` among

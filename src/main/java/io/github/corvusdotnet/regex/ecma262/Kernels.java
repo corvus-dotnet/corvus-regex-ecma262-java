@@ -4,8 +4,8 @@ package io.github.corvusdotnet.regex.ecma262;
  * The byte searches the finders call: the Vector API's where the JVM was started with the module {@code
  * jdk.incubator.vector} ({@code --add-modules jdk.incubator.vector}), which is how a program opts in, and SWAR ({@link
  * Swar}) otherwise. The Vector API is an incubating module in every JDK this library runs on, so it is never the
- * default: without the module, no class of it is loaded. A program that adds the module and runs on a JDK whose
- * incubating API this build cannot link to goes on with SWAR.
+ * default: without the module, no class of it is loaded. It is taken from JDK 21 on ({@link #FIRST_JDK}); a program that
+ * adds the module on an older JDK, or on one whose incubating API this build cannot link to, goes on with SWAR.
  */
 final class Kernels {
     private Kernels() {}
@@ -13,8 +13,15 @@ final class Kernels {
     /** The Vector API's searches, or {@code null} for SWAR. A constant, so the JIT calls the one there is directly. */
     static final ByteKernels VECTOR = load();
 
+    /**
+     * The first JDK whose JIT keeps the Vector API's masks in registers through the queries the searches make ({@code
+     * anyTrue}, {@code firstTrue}, {@code toLong}): on JDK 17 a global search allocated 2.8 KB a count, on JDK 21 and
+     * 25 nothing. Before it the searches stay SWAR, module or not.
+     */
+    static final int FIRST_JDK = 21;
+
     private static ByteKernels load() {
-        if (ModuleLayer.boot().findModule("jdk.incubator.vector").isEmpty()) {
+        if (ModuleLayer.boot().findModule("jdk.incubator.vector").isEmpty() || Runtime.version().feature() < FIRST_JDK) {
             return null;
         }
         try {

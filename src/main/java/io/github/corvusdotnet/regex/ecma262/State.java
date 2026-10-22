@@ -99,6 +99,13 @@ final class State {
         busy = false;
     }
 
+    /**
+     * Makes every match take its memory of failed places before its first step. The system property
+     * {@code corvus.regex.memoFromTheStart} sets it, which is how the test data is run with the memory in use for
+     * every pattern, and the tests set it to run their patterns so.
+     */
+    static boolean memoFromTheStart = Boolean.getBoolean("corvus.regex.memoFromTheStart");
+
     /** Readies the memory for a match of the program over a text of {@code len} units. */
     void reset(Program p, int len, long limit) {
         if (caps.length < 2 * p.groups) {
@@ -122,6 +129,9 @@ final class State {
         checks = 0;
         width = len + 1;
         points = p.points;
+        if (!memoOff && memoFromTheStart) {
+            remember();
+        }
     }
 
     /** Takes the memory of failed places into use when the match has made enough steps to pay for it. */
@@ -131,7 +141,7 @@ final class State {
             memoOff = true;
             return;
         }
-        if ((long) checks * CHECK_EVERY < words + (long) MEMO_STEPS_PER_POSITION * width) {
+        if ((long) checks * CHECK_EVERY < words + (long) MEMO_STEPS_PER_POSITION * width && !memoFromTheStart) {
             return;
         }
         if (memo.length < words) {

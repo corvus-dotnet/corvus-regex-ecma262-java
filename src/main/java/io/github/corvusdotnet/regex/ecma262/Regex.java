@@ -340,6 +340,11 @@ public final class Regex {
         return () -> new MatchIterator(text, null);
     }
 
+    /** A global search of the text that allocates nothing for each match (see {@link Matches}). */
+    public Matches matches(String text) {
+        return new Matches(this).reset(text);
+    }
+
     /** The first match and what each group captured ({@code exec}), or {@code null}. */
     public Captures captures(String text) {
         return captures(text, 0);
@@ -460,6 +465,11 @@ public final class Regex {
         return () -> new MatchIterator(null, text.bytes);
     }
 
+    /** {@link #matches(String)} over UTF-8 text. */
+    public Matches matches(Utf8Text text) {
+        return new Matches(this).reset(text);
+    }
+
     /** {@link #captures(String)} over UTF-8 text. */
     public Captures captures(Utf8Text text) {
         return captures(text, 0);
@@ -572,6 +582,11 @@ public final class Regex {
     /** {@link #findAll(String)} over UTF-8 bytes. */
     public Iterable<Match> findAll(byte[] text) {
         return findAll(Utf8Text.of(text));
+    }
+
+    /** {@link #matches(String)} over UTF-8 bytes. */
+    public Matches matches(byte[] text) {
+        return new Matches(this).reset(text);
     }
 
     /** {@link #captures(String)} over UTF-8 bytes. */

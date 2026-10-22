@@ -31,10 +31,12 @@ public final class Flags {
             char c = flags.charAt(k);
             int at = LETTERS.indexOf(c);
             if (at < 0) {
-                throw RegexException.flags("invalid flag " + RegexException.quoteChar(c) + " in " + RegexException.quote(flags));
+                throw RegexException.flags(
+                        "invalid flag " + RegexException.quoteChar(c) + " in " + RegexException.quote(flags));
             }
             if ((bits & 1 << at) != 0) {
-                throw RegexException.flags("the flag " + RegexException.quoteChar(c) + " is given twice in " + RegexException.quote(flags));
+                throw RegexException.flags("the flag " + RegexException.quoteChar(c) + " is given twice in "
+                        + RegexException.quote(flags));
             }
             bits |= 1 << at;
         }

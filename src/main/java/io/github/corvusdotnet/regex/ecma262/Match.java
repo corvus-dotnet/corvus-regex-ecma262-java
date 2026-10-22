@@ -46,7 +46,10 @@ public final class Match {
         return text16 != null ? text16.substring(start, end) : Text8.string(text8, start, end);
     }
 
-    /** The bytes of the match over UTF-8 text, a half character at either end written as U+FFFD; {@code null} over a String. */
+    /**
+     * The bytes of the match over UTF-8 text, a half character at either end written as U+FFFD; {@code null} over a
+     * String.
+     */
     public byte[] bytes() {
         return text8 == null ? null : Text8.piece(text8, start, end);
     }

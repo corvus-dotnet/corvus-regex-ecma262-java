@@ -160,7 +160,9 @@ final class Fold {
      * With the u flag and case-insensitive matching, {@code \w} and {@code \b} also count the two characters that fold
      * to an ASCII letter (U+017F, the long s, and U+212A, the Kelvin sign) as word characters.
      */
-    private static final int[] FOLD_WORD_PAIRS = {0x30, 0x39, 0x41, 0x5A, 0x5F, 0x5F, 0x61, 0x7A, 0x17F, 0x17F, 0x212A, 0x212A};
+    private static final int[] FOLD_WORD_PAIRS = {
+        0x30, 0x39, 0x41, 0x5A, 0x5F, 0x5F, 0x61, 0x7A, 0x17F, 0x17F, 0x212A, 0x212A,
+    };
 
     static final CharSet FOLD_WORD_SET = CharSet.of(FOLD_WORD_PAIRS, false);
     static final CharSet NOT_FOLD_WORD_SET = CharSet.of(FOLD_WORD_PAIRS, true);

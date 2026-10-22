@@ -20,10 +20,10 @@ final class Matcher16 {
     }
 
     /**
-     * Finds the first match at or after {@code start} (at {@code start} alone with {@code sticky}), and returns where it
-     * starts and ends packed by {@link #span}, or one of NO_MATCH, STOPPED_TIME and STOPPED_MEMORY. When it finds one
-     * and {@code caps} is given, {@code caps} receives from {@code capsAt} the start and end of each group the program
-     * records, or -1 for a group that did not take part. A limit of 0 is none.
+     * Finds the first match at or after {@code start} (at {@code start} alone with {@code sticky}), and returns where
+     * it starts and ends packed by {@link #span}, or one of NO_MATCH, STOPPED_TIME and STOPPED_MEMORY. When it finds
+     * one and {@code caps} is given, {@code caps} receives from {@code capsAt} the start and end of each group the
+     * program records, or -1 for a group that did not take part. A limit of 0 is none.
      */
     static long exec(Program p, String input, int start, boolean sticky, long limitNanos, int[] caps, int capsAt) {
         State st = State.acquire();
@@ -584,7 +584,8 @@ final class Matcher16 {
                             if (memo && i.m != 0) {
                                 int idx = st.memoIndex(p, i.m, at);
                                 if (st.memoBit(idx)) {
-                                    // What follows the loop has failed from here before. The loop gives a character back.
+                                    // What follows the loop has failed from here before. The loop gives a character
+                                    // back.
                                     if (at > floor) {
                                         st.push(State.E_REP, pc + 1, at, floor);
                                     }
@@ -674,8 +675,8 @@ final class Matcher16 {
                             pc = i.x;
                             continue run;
                         }
-                        // The loop may be left or entered from here. A place from which both have failed before fails at
-                        // once.
+                        // The loop may be left or entered from here. A place from which both have failed before fails
+                        // at once.
                         if (memo && i.m != 0) {
                             int idx = st.memoIndex(p, i.m, pos);
                             if (st.memoBit(idx)) {

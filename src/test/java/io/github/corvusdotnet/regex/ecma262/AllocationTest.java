@@ -57,31 +57,35 @@ class AllocationTest {
             {"\\bt\\w*\\b", "gi"},
         };
         for (String[] c : cases) {
-            Regex re = Regex.compile(c[0], c[1]);
-            String where = "/" + c[0] + "/" + c[1];
-            Matches m16 = re.matches(text);
-            Matches m8 = re.matches(text8);
-            Captures caps = re.newCaptures();
-            long n = allocations(() -> {
-                assertTrue(re.isMatch(text));
-                assertTrue(re.isMatch(text8));
-                assertTrue(m16.reset(text).count() > 0);
-                assertTrue(m8.reset(text8).count() > 0);
-            });
-            assertEquals(0, n, where + ": " + n + " bytes in 50 runs");
-            n = allocations(() -> {
-                m16.reset(text);
-                while (m16.next(caps)) {
-                    assertTrue(caps.start(0) >= 0);
-                }
-                m8.reset(text8);
-                while (m8.next(caps)) {
-                    assertTrue(caps.start(0) >= 0);
-                }
-                assertTrue(re.captures(caps, text, 0));
-                assertTrue(re.captures(caps, text8, 0));
-            });
-            assertEquals(0, n, where + ": " + n + " bytes in 50 runs reading the groups");
+            // With no timeout, and with one, whose clock is read as the match goes.
+            for (java.time.Duration timeout : new java.time.Duration[] {java.time.Duration.ZERO,
+                java.time.Duration.ofSeconds(60)}) {
+                Regex re = Regex.compile(c[0], c[1], timeout);
+                String where = "/" + c[0] + "/" + c[1] + " with a timeout of " + timeout;
+                Matches m16 = re.matches(text);
+                Matches m8 = re.matches(text8);
+                Captures caps = re.newCaptures();
+                long n = allocations(() -> {
+                    assertTrue(re.isMatch(text));
+                    assertTrue(re.isMatch(text8));
+                    assertTrue(m16.reset(text).count() > 0);
+                    assertTrue(m8.reset(text8).count() > 0);
+                });
+                assertEquals(0, n, where + ": " + n + " bytes in 50 runs");
+                n = allocations(() -> {
+                    m16.reset(text);
+                    while (m16.next(caps)) {
+                        assertTrue(caps.start(0) >= 0);
+                    }
+                    m8.reset(text8);
+                    while (m8.next(caps)) {
+                        assertTrue(caps.start(0) >= 0);
+                    }
+                    assertTrue(re.captures(caps, text, 0));
+                    assertTrue(re.captures(caps, text8, 0));
+                });
+                assertEquals(0, n, where + ": " + n + " bytes in 50 runs reading the groups");
+            }
         }
     }
 }

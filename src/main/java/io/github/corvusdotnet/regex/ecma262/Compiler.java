@@ -133,8 +133,8 @@ final class Compiler {
                 }
             }
             if (nested) {
-                // A sequence inside a sequence (a written-out repetition) is the same sequence: flat, so that what reads
-                // the terms (the searches, the first characters) sees them all.
+                // A sequence inside a sequence (a written-out repetition) is the same sequence: flat, so that what
+                // reads the terms (the searches, the first characters) sees them all.
                 List<Node> flat = new ArrayList<>(n.subs.size());
                 for (Node sub : n.subs) {
                     if (sub.kind == Node.Kind.CAT) {
@@ -152,14 +152,14 @@ final class Compiler {
             }
             return n.subs.remove(n.subs.size() - 1);
         }
-        if (n.kind == Node.Kind.REPEAT && n.min == n.max && n.max >= 2 && n.max <= 32
+        if (!noUnroll && n.kind == Node.Kind.REPEAT && n.min == n.max && n.max >= 2 && n.max <= 32
                 && (n.subs.get(0).kind == Node.Kind.SET || n.subs.get(0).kind == Node.Kind.CHAR)) {
             // An exact count of one character or class is that many of it in a row: a straight run of tests without a
             // loop's counting.
             return unroll(n);
         }
         Node body = n.kind == Node.Kind.REPEAT ? n.subs.get(0) : null;
-        if (body != null && n.max >= 1 && n.max <= 4 && n.min >= 1 && !nullable(body) && !hasCapture(body)
+        if (!noUnroll && body != null && n.max >= 1 && n.max <= 4 && n.min >= 1 && !nullable(body) && !hasCapture(body)
                 && size(body) <= 32
                 && (body.kind == Node.Kind.GROUP || body.kind == Node.Kind.ALT || body.kind == Node.Kind.CAT)) {
             // A small counted repetition of a body that holds no group and cannot be empty is the body written out,
@@ -182,6 +182,9 @@ final class Compiler {
      * Writes out a counted repetition: X{2,4} is X X (X (X)?)?, the optional copies one inside the other, so that a
      * copy is tried only when the one before it matched.
      */
+    /** Keeps every counted repetition a loop, for the tests of the loops' needs and memo points. */
+    static boolean noUnroll;
+
     private static Node unroll(Node n) {
         Node body = n.subs.get(0);
         List<Node> terms = new ArrayList<>();
@@ -661,19 +664,31 @@ final class Compiler {
      * at every choice.
      */
     static int[] setNeeds(Inst[] insts) {
-        int need16 = needsIn(insts, false);
-        int need8 = needsIn(insts, true);
+        int need16 = needsIn(insts, false, null);
+        int need8 = needsIn(insts, true, null);
         return new int[] {need8, need16};
     }
 
-    private static int needsIn(Inst[] insts, boolean utf8) {
+    /**
+     * {@link #setNeeds} in bytes of UTF-8 alone, and also the number of passes over the instructions it made, the last
+     * of which changed nothing.
+     */
+    static int[] needs(Inst[] insts) {
+        int[] passes = new int[1];
+        int need = needsIn(insts, true, passes);
+        return new int[] {need, passes[0]};
+    }
+
+    private static int needsIn(Inst[] insts, boolean utf8, int[] passes) {
         int[] need = new int[insts.length];
         Arrays.fill(need, (int) NO_MATCH);
         // The needs only fall, and nearly every way goes forward, so going through the instructions from the last to
         // the first settles all but the loops in one pass.
         boolean changed = true;
+        int count = 0;
         while (changed) {
             changed = false;
+            count++;
             for (int pc = insts.length - 1; pc >= 0; pc--) {
                 Inst i = insts[pc];
                 long n = NO_MATCH;
@@ -749,6 +764,9 @@ final class Compiler {
                 }
             }
         }
+        if (passes != null) {
+            passes[0] = count;
+        }
         return need[0];
     }
 
@@ -756,9 +774,10 @@ final class Compiler {
      * Works out what can come next on a way from each instruction to the end of its match: the matcher looks at it
      * before it takes a way, and a way the next character rules out is not taken (V8's quick check). Every figure is a
      * set that can only be too large: an assertion is taken to hold, a backreference and an instruction that matches
-     * right to left to allow anything. A positive lookahead allows what both its body and what follows it allow.
+     * right to left to allow anything. A positive lookahead allows what both its body and what follows it allow. It
+     * returns the number of passes over the instructions it made, the last of which changed nothing.
      */
-    static void setQuick(Program p) {
+    static int setQuick(Program p) {
         Inst[] insts = p.insts;
         int count = insts.length;
         long[] q0 = new long[count];
@@ -766,8 +785,10 @@ final class Compiler {
         byte[] qf = new byte[count];
         final byte all = (byte) (Program.Q_OTHER | Program.Q_MID | Program.Q_END);
         boolean changed = true;
+        int passes = 0;
         while (changed) {
             changed = false;
+            passes++;
             for (int pc = count - 1; pc >= 0; pc--) {
                 Inst i = insts[pc];
                 long n0 = 0;
@@ -910,6 +931,7 @@ final class Compiler {
         p.quick0 = q0;
         p.quick1 = q1;
         p.quickFlags = qf;
+        return passes;
     }
 
     /**

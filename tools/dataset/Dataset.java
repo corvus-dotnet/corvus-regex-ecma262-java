@@ -299,11 +299,11 @@ public final class Dataset {
                 boolean expected = (Boolean) answer;
                 String text = (String) get(t, "text");
                 if (utf16) {
-                    check(name, shown, modeFlags, text, "utf16", expected, () -> re.tryIsMatch(text, LIMIT), counts, wrong);
+                    check(name, shown, modeFlags, text, "utf16", expected, () -> re.isMatch(text, LIMIT), counts, wrong);
                 }
                 if (utf8 && !hasLoneSurrogate(text)) {
                     Utf8Text u = Utf8Text.of(text);
-                    check(name, shown, modeFlags, text, "utf8", expected, () -> re.tryIsMatch(u, LIMIT), counts, wrong);
+                    check(name, shown, modeFlags, text, "utf8", expected, () -> re.isMatch(u, LIMIT), counts, wrong);
                 }
             }
         }
@@ -492,7 +492,7 @@ public final class Dataset {
                 int[][] exec = execOf(get(a, "exec"));
                 Captures got;
                 try {
-                    got = re.tryCaptures(text, 0, LIMIT);
+                    got = re.captures(text, 0, LIMIT);
                 } catch (MatchLimitException e) {
                     counts.limited.incrementAndGet();
                     wrong.add("LIMIT\tcaptures.jsonl\t" + where);

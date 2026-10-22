@@ -4,7 +4,8 @@ package io.github.corvusdotnet.regex.ecma262;
  * A global search that allocates nothing for each match ({@code matchAll} as a cursor): {@link #next()} moves to the
  * next match, after an empty match one character on, and {@link #start()} and {@link #end()} say where it is. With
  * the y flag each match must start where the one before it ended. It can be pointed at another text with
- * {@link #reset(String)}, so that one cursor serves a loop over many texts. Not safe to share between threads.
+ * {@link #reset(String)}, so that one cursor serves a loop over many texts. Not safe to share between threads. A match
+ * that reaches the pattern's timeout throws {@link MatchLimitException}, and ends the search.
  */
 public final class Matches {
     private final Regex re;
@@ -51,8 +52,13 @@ public final class Matches {
     }
 
     private long exec(int[] slots) {
-        return text16 != null ? Text16.exec(re, text16, at, re.flags.sticky(), 0, slots)
-                : Text8.exec(re, text8, at, re.flags.sticky(), 0, slots);
+        try {
+            return text16 != null ? Text16.exec(re, text16, at, re.flags.sticky(), re.timeoutNanos, slots)
+                    : Text8.exec(re, text8, at, re.flags.sticky(), re.timeoutNanos, slots);
+        } catch (MatchLimitException e) {
+            found(-1);
+            throw e;
+        }
     }
 
     private boolean found(long span) {

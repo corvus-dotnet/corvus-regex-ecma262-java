@@ -86,7 +86,8 @@ final class Utf16 {
     }
 
     static int normalize(String input, int start, boolean unicode) {
-        if (unicode && start > 0 && start < input.length() && low(input.charAt(start)) && high(input.charAt(start - 1))) {
+        if (unicode && start > 0 && start < input.length() && low(input.charAt(start))
+                && high(input.charAt(start - 1))) {
             return start - 1;
         }
         return start;

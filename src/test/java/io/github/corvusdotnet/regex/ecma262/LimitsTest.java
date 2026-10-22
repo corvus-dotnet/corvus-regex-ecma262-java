@@ -33,33 +33,33 @@ class LimitsTest {
         Regex re = Regex.compile(NEVER_ANSWERS, "u");
         String text = neverAnswered();
         long start = System.nanoTime();
-        MatchLimitException e = assertThrows(MatchLimitException.class, () -> re.tryIsMatch(text, limit));
+        MatchLimitException e = assertThrows(MatchLimitException.class, () -> re.isMatch(text, limit));
         Duration took = Duration.ofNanos(System.nanoTime() - start);
         assertEquals(MatchLimitException.Kind.TIME, e.kind());
         assertTrue(e.getMessage().contains("longer than its limit"));
         assertTrue(took.compareTo(limit) >= 0 && took.compareTo(limit.plus(GENEROUS)) < 0, "abandoned after " + took);
         // Every member with a limit, in both encodings.
         Utf8Text t8 = Utf8Text.of(text);
-        assertThrows(MatchLimitException.class, () -> re.tryIsMatch(t8, limit));
-        assertThrows(MatchLimitException.class, () -> re.tryIsMatch(text.getBytes(), limit));
-        assertThrows(MatchLimitException.class, () -> re.tryFind(text, 0, limit));
-        assertThrows(MatchLimitException.class, () -> re.tryFind(t8, 0, limit));
-        assertThrows(MatchLimitException.class, () -> re.tryFind(text.getBytes(), 0, limit));
-        assertThrows(MatchLimitException.class, () -> re.tryCaptures(text, 0, limit));
-        assertThrows(MatchLimitException.class, () -> re.tryCaptures(t8, 0, limit));
-        assertThrows(MatchLimitException.class, () -> re.tryCaptures(text.getBytes(), 0, limit));
+        assertThrows(MatchLimitException.class, () -> re.isMatch(t8, limit));
+        assertThrows(MatchLimitException.class, () -> re.isMatch(text.getBytes(), limit));
+        assertThrows(MatchLimitException.class, () -> re.find(text, 0, limit));
+        assertThrows(MatchLimitException.class, () -> re.find(t8, 0, limit));
+        assertThrows(MatchLimitException.class, () -> re.find(text.getBytes(), 0, limit));
+        assertThrows(MatchLimitException.class, () -> re.captures(text, 0, limit));
+        assertThrows(MatchLimitException.class, () -> re.captures(t8, 0, limit));
+        assertThrows(MatchLimitException.class, () -> re.captures(text.getBytes(), 0, limit));
     }
 
     @Test
     void theMatchLimitIsForEachMatch() {
         Regex re = Regex.compile(NEVER_ANSWERS, "u");
         for (int k = 0; k < 3; k++) {
-            assertTrue(re.tryIsMatch("aaaa", Duration.ofMillis(50)));
+            assertTrue(re.isMatch("aaaa", Duration.ofMillis(50)));
         }
-        assertEquals("aaaa", re.tryFind("aaaa", 0, Duration.ofMillis(50)).value());
-        assertEquals("aaaa", re.tryCaptures(Utf8Text.of("aaaa"), 0, Duration.ofMillis(50)).group(0));
-        assertEquals(null, re.tryCaptures("b", 0, Duration.ofMillis(50)));
-        assertEquals(null, re.tryFind(Utf8Text.of("b"), 0, Duration.ofMillis(50)));
+        assertEquals("aaaa", re.find("aaaa", 0, Duration.ofMillis(50)).value());
+        assertEquals("aaaa", re.captures(Utf8Text.of("aaaa"), 0, Duration.ofMillis(50)).group(0));
+        assertEquals(null, re.captures("b", 0, Duration.ofMillis(50)));
+        assertEquals(null, re.find(Utf8Text.of("b"), 0, Duration.ofMillis(50)));
     }
 
     @Test
@@ -67,7 +67,7 @@ class LimitsTest {
         Duration hour = Duration.ofHours(1);
         Regex re = Regex.compile("(?:a?){2147483647}", "u");
         long start = System.nanoTime();
-        MatchLimitException e = assertThrows(MatchLimitException.class, () -> re.tryIsMatch("", hour));
+        MatchLimitException e = assertThrows(MatchLimitException.class, () -> re.isMatch("", hour));
         assertEquals(MatchLimitException.Kind.MEMORY, e.kind());
         assertTrue(e.getMessage().contains("memory"));
         assertTrue(System.nanoTime() - start < GENEROUS.toNanos());
@@ -75,9 +75,9 @@ class LimitsTest {
         // gives up at once, because the text is shorter than the least the pattern consumes.
         Regex least = Regex.compile("(?:a){2147483647}", "u");
         assertFalse(least.isMatch("aaa"));
-        assertFalse(least.tryIsMatch("aaa", Duration.ZERO));
-        assertFalse(least.tryIsMatch("aaa", Duration.ofSeconds(-1)));
-        assertFalse(least.tryIsMatch("aaa", Duration.ofSeconds(Long.MAX_VALUE)));
+        assertFalse(least.isMatch("aaa", Duration.ZERO));
+        assertFalse(least.isMatch("aaa", Duration.ofSeconds(-1)));
+        assertFalse(least.isMatch("aaa", Duration.ofSeconds(Long.MAX_VALUE)));
     }
 
     @Test
@@ -103,8 +103,8 @@ class LimitsTest {
             boolean want = (Boolean) c[2];
             Regex re = Regex.compile(pattern, "u");
             for (Duration limit : new Duration[] {Duration.ofSeconds(1), Duration.ofSeconds(10), Duration.ZERO}) {
-                assertEquals(want, re.tryIsMatch(text, limit), pattern + " with the limit " + limit);
-                assertEquals(want, re.tryIsMatch(Utf8Text.of(text), limit), pattern + " over UTF-8");
+                assertEquals(want, re.isMatch(text, limit), pattern + " with the limit " + limit);
+                assertEquals(want, re.isMatch(Utf8Text.of(text), limit), pattern + " over UTF-8");
             }
             assertEquals(want, re.isMatch(text), pattern);
         }
@@ -127,7 +127,7 @@ class LimitsTest {
             boolean answered;
             boolean result = false;
             try {
-                result = re.tryIsMatch(c[1], limit);
+                result = re.isMatch(c[1], limit);
                 answered = true;
             } catch (MatchLimitException e) {
                 answered = false;
@@ -192,5 +192,109 @@ class LimitsTest {
                 assertEquals(RegexException.Kind.INVALID, e.kind(), pattern.substring(0, Math.min(20, pattern.length())));
             }
         }
+    }
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // The match timeout of a pattern.
+
+    static void assertTime(org.junit.jupiter.api.function.Executable member, String name) {
+        MatchLimitException e = assertThrows(MatchLimitException.class, member, name);
+        assertEquals(MatchLimitException.Kind.TIME, e.kind(), name);
+    }
+
+    /**
+     * Every member that matches gives its match the pattern's timeout, and throws at it, over a String, UTF-8 text and
+     * bytes: the global searches end there, and replace and split throw for the whole call.
+     */
+    @Test
+    void everyMemberThrowsAtTheTimeout() {
+        Duration timeout = Duration.ofMillis(30);
+        Regex re = Regex.compile(NEVER_ANSWERS, "u", timeout);
+        assertEquals(timeout, re.matchTimeout());
+        String text = neverAnswered();
+        Utf8Text t8 = Utf8Text.of(text);
+        byte[] b = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        long start = System.nanoTime();
+        assertTime(() -> re.isMatch(text), "isMatch");
+        assertTime(() -> re.isMatch(text, 0), "isMatch at");
+        assertTime(() -> re.find(text), "find");
+        assertTime(() -> re.find(text, 0), "find at");
+        assertTime(() -> re.captures(text), "captures");
+        assertTime(() -> re.captures(text, 0), "captures at");
+        assertTime(() -> re.captures(re.newCaptures(), text, 0), "captures into");
+        assertTime(() -> re.findAll(text).iterator().hasNext(), "findAll");
+        assertTime(() -> re.capturesAll(text).iterator().next(), "capturesAll");
+        assertTime(() -> re.matches(text).next(), "matches");
+        assertTime(() -> re.matches(text).next(re.newCaptures()), "matches with groups");
+        assertTime(() -> re.matches(text).count(), "matches count");
+        assertTime(() -> re.replace(text, "x"), "replace");
+        assertTime(() -> re.replaceAll(text, "x"), "replaceAll");
+        assertTime(() -> re.replace(text, c -> ""), "replace with a function");
+        assertTime(() -> re.split(text), "split");
+        assertTime(() -> re.split(text, 2), "split with a limit");
+        assertTime(() -> re.isMatch(t8), "isMatch over UTF-8");
+        assertTime(() -> re.isMatch(t8, 0), "isMatch at over UTF-8");
+        assertTime(() -> re.find(t8), "find over UTF-8");
+        assertTime(() -> re.captures(t8), "captures over UTF-8");
+        assertTime(() -> re.captures(re.newCaptures(), t8, 0), "captures into over UTF-8");
+        assertTime(() -> re.findAll(t8).iterator().next(), "findAll over UTF-8");
+        assertTime(() -> re.capturesAll(t8).iterator().hasNext(), "capturesAll over UTF-8");
+        assertTime(() -> re.matches(t8).next(), "matches over UTF-8");
+        assertTime(() -> re.replace(t8, "x"), "replace over UTF-8");
+        assertTime(() -> re.replaceAll(t8, "x"), "replaceAll over UTF-8");
+        assertTime(() -> re.replace(t8, c -> ""), "replace with a function over UTF-8");
+        assertTime(() -> re.split(t8), "split over UTF-8");
+        assertTime(() -> re.isMatch(b), "isMatch over bytes");
+        assertTime(() -> re.find(b, 0), "find over bytes");
+        assertTime(() -> re.captures(b), "captures over bytes");
+        assertTime(() -> re.matches(b).next(), "matches over bytes");
+        assertTime(() -> re.replace(b, "x"), "replace over bytes");
+        assertTime(() -> re.split(b, 3), "split over bytes");
+        assertTrue(System.nanoTime() - start < GENEROUS.toNanos());
+        // A search that reached the timeout has ended.
+        java.util.Iterator<Match> it = re.findAll(text).iterator();
+        assertThrows(MatchLimitException.class, it::hasNext);
+        assertFalse(it.hasNext());
+        Matches m = re.matches(text);
+        assertThrows(MatchLimitException.class, m::next);
+        assertFalse(m.next());
+        assertEquals(-1, m.start());
+        // A text the pattern answers within the timeout is answered, by every member.
+        assertTrue(re.isMatch("aaaa"));
+        assertEquals("<aaaa>", re.replace("aaaa", "<$&>"));
+        assertEquals(3, re.split("aaaa").size(), "the empty pieces and the group");
+        assertEquals(1, re.matches("aaaa").count());
+    }
+
+    /** A timeout brings the cap on the memory of the backtracking with it. */
+    @Test
+    void aTimeoutCapsTheMemoryOfAMatch() {
+        Regex re = Regex.compile("(?:a?){2147483647}", "", Duration.ofHours(1));
+        long start = System.nanoTime();
+        for (org.junit.jupiter.api.function.Executable member : new org.junit.jupiter.api.function.Executable[] {
+            () -> re.isMatch(""), () -> re.matches("").next(), () -> re.split("")}) {
+            MatchLimitException e = assertThrows(MatchLimitException.class, member);
+            assertEquals(MatchLimitException.Kind.MEMORY, e.kind());
+        }
+        assertTrue(System.nanoTime() - start < GENEROUS.toNanos());
+    }
+
+    /** The members that take a Duration give one match a limit in place of the timeout, and zero is none. */
+    @Test
+    void aLimitOfItsOwnTakesThePlaceOfTheTimeout() {
+        Regex re = Regex.compile(NEVER_ANSWERS, "u", Duration.ofHours(1));
+        String text = neverAnswered();
+        Duration shortLimit = Duration.ofMillis(30);
+        assertTime(() -> re.isMatch(text, shortLimit), "isMatch within");
+        assertTime(() -> re.find(text, 0, shortLimit), "find within");
+        assertTime(() -> re.captures(text, 0, shortLimit), "captures within");
+        assertTime(() -> re.isMatch(Utf8Text.of(text), shortLimit), "isMatch within over UTF-8");
+        Regex quick = Regex.compile("^(a+)\\1$", "", Duration.ofNanos(1));
+        assertTrue(quick.isMatch("aaaa", Duration.ZERO));
+        for (Duration none : new Duration[] {null, Duration.ZERO}) {
+            assertEquals(Duration.ZERO, Regex.compile("a", "", none).matchTimeout());
+        }
+        assertEquals(Duration.ZERO, Regex.compile("a").matchTimeout(), "no timeout unless one is set");
+        assertEquals(Duration.ofSeconds(2), Regex.compile("a", Flags.parse("g"), Duration.ofSeconds(2)).matchTimeout());
     }
 }

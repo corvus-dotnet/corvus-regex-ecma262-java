@@ -72,7 +72,8 @@ final class Utf8 {
                 }
                 int b1 = p[pos + 1] & 0xFF;
                 if (b1 >= lo && b1 <= hi) {
-                    return pack((p0 & 0x07) << 18 | (b1 & 0x3F) << 12 | (p[pos + 2] & 0x3F) << 6 | (p[pos + 3] & 0x3F), 4);
+                    return pack((p0 & 0x07) << 18 | (b1 & 0x3F) << 12 | (p[pos + 2] & 0x3F) << 6 | (p[pos + 3] & 0x3F),
+                            4);
                 }
             }
         }
@@ -197,7 +198,8 @@ final class Utf8 {
         if (c == '\n' || c == '\r') {
             return true;
         }
-        return (c == 0xA8 || c == 0xA9) && pos >= 3 && (input[pos - 3] & 0xFF) == 0xE2 && (input[pos - 2] & 0xFF) == 0x80;
+        return (c == 0xA8 || c == 0xA9) && pos >= 3 && (input[pos - 3] & 0xFF) == 0xE2
+                && (input[pos - 2] & 0xFF) == 0x80;
     }
 
     /** Whether units compared equal to a group's are the same code points: always, over UTF-8. */

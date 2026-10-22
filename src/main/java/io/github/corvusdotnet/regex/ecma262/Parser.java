@@ -1017,8 +1017,8 @@ final class Parser {
             i--;
             return legacyOctal();
         }
-        // Identity escapes. The u flag allows only the syntax characters and '/', and '-' in a class. Annex B allows any
-        // character, except k in a pattern with a named group.
+        // Identity escapes. The u flag allows only the syntax characters and '/', and '-' in a class. Annex B allows
+        // any character, except k in a pattern with a named group.
         if (unicode && !syntaxCharacter(c) && !(inClass && c == '-')) {
             throw fail("invalid escape");
         }
@@ -1233,7 +1233,9 @@ final class Parser {
     /** Whether the element just read by {@link #classSetElement} was a range of two characters. */
     private boolean elementRange;
 
-    /** Reads one element of a class of the v flag's grammar: an operand, or a range (noted in {@link #elementRange}). */
+    /**
+     * Reads one element of a class of the v flag's grammar: an operand, or a range (noted in {@link #elementRange}).
+     */
     private ClassSetValue classSetElement() {
         charge(NODE_SIZE);
         elementRange = false;
@@ -1375,7 +1377,9 @@ final class Parser {
         return value;
     }
 
-    /** The value of a property of strings: its code points, and its sequences (case folded in a case-insensitive group). */
+    /**
+     * The value of a property of strings: its code points, and its sequences (case folded in a case-insensitive group).
+     */
     private ClassSetValue stringsValue(CharSet set, List<int[]> strings) {
         List<IntList> canonical = new ArrayList<>(strings.size());
         for (int[] s : strings) {

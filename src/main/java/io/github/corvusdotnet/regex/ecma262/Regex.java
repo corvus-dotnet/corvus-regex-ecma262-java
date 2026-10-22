@@ -22,6 +22,12 @@ import java.util.function.Supplier;
  * when it was made. Positions are in the units of the text: UTF-16 code units, or bytes of UTF-8. Nothing is
  * transcoded. A match allocates nothing once the thread's working memory has grown to what the pattern and the text
  * need; {@link #captures(Captures, String, int)} reads the groups of a match into a {@link Captures} made once.
+ *
+ * <p>A pattern has a match timeout, as a {@code Regex} of .NET's {@code System.Text.RegularExpressions} has: the time
+ * each match may take, which brings a cap on the memory of its backtracking with it. Every member that matches throws a
+ * {@link MatchLimitException} when a match reaches either. There is none unless {@link #compile(String, Flags,
+ * Duration)} or {@link #setDefaultMatchTimeout(Duration)} gives one, so a program that matches patterns or texts from
+ * outside should give its patterns one.
  */
 public final class Regex {
     /** The longest pattern, in bytes of UTF-8 (a lone surrogate counts three). */
@@ -56,37 +62,108 @@ public final class Regex {
     final boolean unicode;
     /** The pattern needs no backtracking and is small enough to be tried for an automaton. */
     final boolean regular;
+    /**
+     * The time each match may take before it is abandoned, which brings the cap on the memory of its backtracking with
+     * it, in nanoseconds; 0 for no limit.
+     */
+    final long timeoutNanos;
+    /** The size the parser counted for the pattern. */
+    final int size;
 
-    private Regex(String pattern, Flags flags, Parser.Parsed parsed) {
+    private Regex(String pattern, Flags flags, long timeoutNanos, Parser.Parsed parsed) {
         this.pattern = pattern;
         this.flags = flags;
+        this.timeoutNanos = timeoutNanos;
         this.unicode = flags.unicode() || flags.unicodeSets();
         this.regular = !parsed.parser.needsBacktracking && Re2.cost(parsed.root) <= Re2.MAX_COST;
+        this.size = parsed.parser.size;
         this.info = new GroupInfo(parsed.parser.groupCount(), parsed.parser.groupNames());
         this.prog = Compiler.compileProgram(parsed.root, unicode, -1);
     }
 
-    /** Compiles a pattern with no flags (see {@link #compile(String, Flags)}). */
+    /**
+     * The match timeout of every pattern compiled without one of its own, in nanoseconds; 0 for none. It starts from
+     * the system property {@code corvus.regex.defaultMatchTimeout} (see {@link #setDefaultMatchTimeout(Duration)}).
+     */
+    private static volatile long defaultTimeoutNanos =
+            timeoutFromProperty(System.getProperty("corvus.regex.defaultMatchTimeout"));
+
+    /** The timeout the system property gives, in nanoseconds: milliseconds, or an ISO-8601 duration; 0 for none. */
+    static long timeoutFromProperty(String value) {
+        if (value == null || value.isEmpty()) {
+            return 0;
+        }
+        try {
+            return nanos(value.chars().allMatch(Character::isDigit) ? Duration.ofMillis(Long.parseLong(value))
+                    : Duration.parse(value));
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException(
+                    "corvus.regex.defaultMatchTimeout is neither milliseconds nor an ISO-8601 duration: " + value, e);
+        }
+    }
+
+    /**
+     * Sets the match timeout of every pattern compiled from now on without one of its own: the time each match may take
+     * before it is abandoned with a {@link MatchLimitException}, or {@link Duration#ZERO} (or {@code null}) for no
+     * limit, which is the default. It is the process-wide default of .NET's {@code System.Text.RegularExpressions}
+     * ({@code REGEX_DEFAULT_MATCH_TIMEOUT}), and a program that matches patterns or texts from outside should set it
+     * when it starts, here or with the system property {@code corvus.regex.defaultMatchTimeout} (milliseconds, or an
+     * ISO-8601 duration such as {@code PT1S}). A pattern already compiled keeps the timeout it was compiled with.
+     */
+    public static void setDefaultMatchTimeout(Duration timeout) {
+        defaultTimeoutNanos = timeout == null ? 0 : nanos(timeout);
+    }
+
+    /** The match timeout a pattern compiled now without one of its own takes, {@link Duration#ZERO} for none. */
+    public static Duration defaultMatchTimeout() {
+        return Duration.ofNanos(defaultTimeoutNanos);
+    }
+
+    /** Compiles a pattern with no flags (see {@link #compile(String, Flags, Duration)}). */
     public static Regex compile(String pattern) {
         return compile(pattern, Flags.NONE);
     }
 
     /**
      * Compiles a pattern with the flags {@code new RegExp(pattern, flags)} takes, such as {@code ""}, {@code "u"} or
-     * {@code "gimsuy"} (see {@link #compile(String, Flags)}).
+     * {@code "gimsuy"}, and the {@link #defaultMatchTimeout()} (see {@link #compile(String, Flags, Duration)}).
      */
     public static Regex compile(String pattern, String flags) {
         return compile(pattern, Flags.parse(flags));
     }
 
-    /**
-     * Compiles a pattern. It throws a {@link RegexException} of kind {@link RegexException.Kind#INVALID} for a pattern
-     * that is not valid in the grammar of its flags, {@link RegexException.Kind#FLAGS} for flags that are not valid,
-     * and {@link RegexException.Kind#TOO_LARGE} for a pattern over a limit of size, whether or not it is valid.
-     */
+    /** {@link #compile(String, String)} with a match timeout (see {@link #compile(String, Flags, Duration)}). */
+    public static Regex compile(String pattern, String flags, Duration matchTimeout) {
+        return compile(pattern, Flags.parse(flags), matchTimeout);
+    }
+
+    /** {@link #compile(String, String)} with the flags already read. */
     public static Regex compile(String pattern, Flags flags) {
+        return compile(pattern, flags, Duration.ofNanos(defaultTimeoutNanos));
+    }
+
+    /**
+     * Compiles a pattern with a match timeout: the time each match may take before it is abandoned with a {@link
+     * MatchLimitException} of kind {@link MatchLimitException.Kind#TIME}, {@link Duration#ZERO} (or {@code null}) for
+     * no limit. A match with a timeout is also abandoned, with the kind {@link MatchLimitException.Kind#MEMORY}, when
+     * its backtracking stack reaches {@link #MAX_STACK} entries. The clock is read every 4,096 steps of the
+     * backtracking matcher, so a match can go past the timeout by the time those take. Every member that matches gives
+     * each of its matches the timeout, the global searches, replace and split among them; the members that take a
+     * {@code Duration} give one match a limit of its own in its place.
+     *
+     * <p>Without a timeout a match has no limit of time or of memory: a pattern and a text that come from outside can
+     * then hold the thread, and take memory, for as long as the match takes. Give such a pattern a timeout, here or for
+     * every pattern with {@link #setDefaultMatchTimeout(Duration)}.
+     *
+     * <p>It throws a {@link RegexException} of kind {@link RegexException.Kind#INVALID} for a pattern that is not valid
+     * in the grammar of its flags, {@link RegexException.Kind#FLAGS} for flags that are not valid, and
+     * {@link RegexException.Kind#TOO_LARGE} for a pattern over a limit of size, whether or not it is valid.
+     */
+    public static Regex compile(String pattern, Flags flags, Duration matchTimeout) {
         Parser.Syntax syntax = flags.syntax();
-        Regex re = onADeepStack(pattern, flags.unicodeSets(), () -> new Regex(pattern, flags, read(pattern, syntax)));
+        long timeout = matchTimeout == null ? 0 : nanos(matchTimeout);
+        Regex re = onADeepStack(pattern, flags.unicodeSets(),
+                () -> new Regex(pattern, flags, timeout, read(pattern, syntax)));
         if (re == null) {
             throw RegexException.tooLarge(Limit.NESTING, MAX_NESTING);
         }
@@ -129,7 +206,7 @@ public final class Regex {
      * overflow the stack. A pattern that opens few groups is read where it is; any other on a thread of its own with a
      * stack for the deepest nesting the limits allow. {@code null} when that thread could not be started.
      */
-    private static <T> T onADeepStack(String pattern, boolean unicodeSets, Supplier<T> work) {
+    static <T> T onADeepStack(String pattern, boolean unicodeSets, Supplier<T> work) {
         return shallow(pattern, unicodeSets) ? work.get() : deep(work);
     }
 
@@ -138,7 +215,7 @@ public final class Regex {
      * class may hold a class, and the parser goes a level deeper for each, so there a {@code [} counts as a {@code (}
      * does. In the other grammars a class holds no class and a {@code [} opens no level.
      */
-    private static boolean shallow(String pattern, boolean unicodeSets) {
+    static boolean shallow(String pattern, boolean unicodeSets) {
         int n = 0;
         for (int k = 0; k < pattern.length(); k++) {
             char c = pattern.charAt(k);
@@ -234,7 +311,7 @@ public final class Regex {
     }
 
     /** The span, or -1 for none; it throws for a match that reached its limit. */
-    private static long checked(long found) {
+    static long checked(long found) {
         if (found == Matcher16.STOPPED_TIME) {
             throw new MatchLimitException(MatchLimitException.Kind.TIME);
         }
@@ -258,6 +335,14 @@ public final class Regex {
     /** The flags of the pattern. */
     public Flags flags() {
         return flags;
+    }
+
+    /**
+     * The time each match may take before it is abandoned, {@link Duration#ZERO} for no limit (see {@link
+     * #compile(String, Flags, Duration)}).
+     */
+    public Duration matchTimeout() {
+        return Duration.ofNanos(timeoutNanos);
     }
 
     /** The number of groups of a match: one for the whole match, and one for each capturing group. */
@@ -293,27 +378,29 @@ public final class Regex {
      * or the memory the match takes.
      */
     public boolean isMatch(String text) {
-        return Text16.exec(this, text, 0, flags.sticky(), 0, null) >= 0;
-    }
-
-    /** {@link #isMatch(String)} from the position {@code start}, as {@code RegExp.prototype.test} with that lastIndex. */
-    public boolean isMatch(String text, int start) {
-        checkStart(start);
-        return Text16.exec(this, text, start, flags.sticky(), 0, null) >= 0;
+        return Text16.exec(this, text, 0, flags.sticky(), timeoutNanos, null) >= 0;
     }
 
     /**
-     * {@link #isMatch(String)} with a limit on the time the match may take (none when it is zero). A match that reaches
-     * the limit is abandoned with a {@link MatchLimitException} of kind {@link MatchLimitException.Kind#TIME}; so is a
-     * match whose backtracking stack reaches {@link #MAX_STACK} entries, of kind
-     * {@link MatchLimitException.Kind#MEMORY}. The clock is read every 4,096 steps of the backtracking matcher, so a
-     * match can go past the limit by the time those take.
+     * {@link #isMatch(String)} from the position {@code start}, as {@code RegExp.prototype.test} with that lastIndex.
      */
-    public boolean tryIsMatch(String text, Duration limit) {
-        return checked(Text16.exec(this, text, 0, flags.sticky(), nanos(limit), null)) >= 0;
+    public boolean isMatch(String text, int start) {
+        checkStart(start);
+        return Text16.exec(this, text, start, flags.sticky(), timeoutNanos, null) >= 0;
     }
 
-    /** The first match in the text (at its start alone with the y flag): {@code exec} with lastIndex 0, or {@code null}. */
+    /**
+     * {@link #isMatch(String)} with a limit on the time the match may take in place of the pattern's timeout (none when
+     * it is zero). The limit brings the cap on the memory of the backtracking with it, as a timeout does (see
+     * {@link #compile(String, Flags, Duration)}).
+     */
+    public boolean isMatch(String text, Duration limit) {
+        return (Text16.exec(this, text, 0, flags.sticky(), nanos(limit), null)) >= 0;
+    }
+
+    /**
+     * The first match in the text (at its start alone with the y flag): {@code exec} with lastIndex 0, or {@code null}.
+     */
     public Match find(String text) {
         return find(text, 0);
     }
@@ -321,20 +408,23 @@ public final class Regex {
     /** The first match at or after {@code start}: {@code exec} with lastIndex set to it, or {@code null}. */
     public Match find(String text, int start) {
         checkStart(start);
-        long found = Text16.exec(this, text, start, flags.sticky(), 0, null);
+        long found = Text16.exec(this, text, start, flags.sticky(), timeoutNanos, null);
         return found < 0 ? null : new Match(text, null, from(found), to(found));
     }
 
-    /** {@link #find(String, int)} with a limit on the time the match may take (see {@link #tryIsMatch(String, Duration)}). */
-    public Match tryFind(String text, int start, Duration limit) {
+    /**
+     * {@link #find(String, int)} with a limit on the time the match may take (see {@link #isMatch(String, Duration)}).
+     */
+    public Match find(String text, int start, Duration limit) {
         checkStart(start);
-        long found = checked(Text16.exec(this, text, start, flags.sticky(), nanos(limit), null));
+        long found = (Text16.exec(this, text, start, flags.sticky(), nanos(limit), null));
         return found < 0 ? null : new Match(text, null, from(found), to(found));
     }
 
     /**
      * Every match in the text, as a global search finds them ({@code matchAll}): after an empty match the search goes
-     * on one character later. With the y flag each match must start where the one before it ended.
+     * on one character later. With the y flag each match must start where the one before it ended. A match that reaches
+     * the pattern's timeout throws {@link MatchLimitException} from the iterator, and ends the search.
      */
     public Iterable<Match> findAll(String text) {
         return () -> new MatchIterator(text, null);
@@ -357,11 +447,14 @@ public final class Regex {
         return captures(c, text, start) ? c : null;
     }
 
-    /** {@link #captures(String, int)} with a limit on the time the match may take (see {@link #tryIsMatch(String, Duration)}). */
-    public Captures tryCaptures(String text, int start, Duration limit) {
+    /**
+     * {@link #captures(String, int)} with a limit on the time the match may take (see {@link #isMatch(String,
+     * Duration)}).
+     */
+    public Captures captures(String text, int start, Duration limit) {
         checkStart(start);
         Captures c = new Captures(info);
-        if (checked(Text16.exec(this, text, start, flags.sticky(), nanos(limit), c.slots)) < 0) {
+        if ((Text16.exec(this, text, start, flags.sticky(), nanos(limit), c.slots)) < 0) {
             return null;
         }
         c.text16 = text;
@@ -375,7 +468,7 @@ public final class Regex {
     public boolean captures(Captures into, String text, int start) {
         checkStart(start);
         checkCaptures(into);
-        if (Text16.exec(this, text, start, flags.sticky(), 0, into.slots) < 0) {
+        if (Text16.exec(this, text, start, flags.sticky(), timeoutNanos, into.slots) < 0) {
             return false;
         }
         into.text16 = text;
@@ -427,18 +520,18 @@ public final class Regex {
 
     /** {@link #isMatch(String)} over UTF-8 text. */
     public boolean isMatch(Utf8Text text) {
-        return Text8.exec(this, text.bytes, 0, flags.sticky(), 0, null) >= 0;
+        return Text8.exec(this, text.bytes, 0, flags.sticky(), timeoutNanos, null) >= 0;
     }
 
     /** {@link #isMatch(String, int)} over UTF-8 text; {@code start} is a byte offset. */
     public boolean isMatch(Utf8Text text, int start) {
         checkStart(start);
-        return Text8.exec(this, text.bytes, start, flags.sticky(), 0, null) >= 0;
+        return Text8.exec(this, text.bytes, start, flags.sticky(), timeoutNanos, null) >= 0;
     }
 
-    /** {@link #tryIsMatch(String, Duration)} over UTF-8 text. */
-    public boolean tryIsMatch(Utf8Text text, Duration limit) {
-        return checked(Text8.exec(this, text.bytes, 0, flags.sticky(), nanos(limit), null)) >= 0;
+    /** {@link #isMatch(String, Duration)} over UTF-8 text. */
+    public boolean isMatch(Utf8Text text, Duration limit) {
+        return (Text8.exec(this, text.bytes, 0, flags.sticky(), nanos(limit), null)) >= 0;
     }
 
     /** {@link #find(String)} over UTF-8 text. */
@@ -449,14 +542,14 @@ public final class Regex {
     /** {@link #find(String, int)} over UTF-8 text; {@code start} is a byte offset. */
     public Match find(Utf8Text text, int start) {
         checkStart(start);
-        long found = Text8.exec(this, text.bytes, start, flags.sticky(), 0, null);
+        long found = Text8.exec(this, text.bytes, start, flags.sticky(), timeoutNanos, null);
         return found < 0 ? null : new Match(null, text.bytes, from(found), to(found));
     }
 
-    /** {@link #tryFind(String, int, Duration)} over UTF-8 text. */
-    public Match tryFind(Utf8Text text, int start, Duration limit) {
+    /** {@link #find(String, int, Duration)} over UTF-8 text. */
+    public Match find(Utf8Text text, int start, Duration limit) {
         checkStart(start);
-        long found = checked(Text8.exec(this, text.bytes, start, flags.sticky(), nanos(limit), null));
+        long found = (Text8.exec(this, text.bytes, start, flags.sticky(), nanos(limit), null));
         return found < 0 ? null : new Match(null, text.bytes, from(found), to(found));
     }
 
@@ -482,11 +575,11 @@ public final class Regex {
         return captures(c, text, start) ? c : null;
     }
 
-    /** {@link #tryCaptures(String, int, Duration)} over UTF-8 text. */
-    public Captures tryCaptures(Utf8Text text, int start, Duration limit) {
+    /** {@link #captures(String, int, Duration)} over UTF-8 text. */
+    public Captures captures(Utf8Text text, int start, Duration limit) {
         checkStart(start);
         Captures c = new Captures(info);
-        if (checked(Text8.exec(this, text.bytes, start, flags.sticky(), nanos(limit), c.slots)) < 0) {
+        if ((Text8.exec(this, text.bytes, start, flags.sticky(), nanos(limit), c.slots)) < 0) {
             return null;
         }
         c.text8 = text.bytes;
@@ -497,7 +590,7 @@ public final class Regex {
     public boolean captures(Captures into, Utf8Text text, int start) {
         checkStart(start);
         checkCaptures(into);
-        if (Text8.exec(this, text.bytes, start, flags.sticky(), 0, into.slots) < 0) {
+        if (Text8.exec(this, text.bytes, start, flags.sticky(), timeoutNanos, into.slots) < 0) {
             return false;
         }
         into.text8 = text.bytes;
@@ -510,7 +603,9 @@ public final class Regex {
         return () -> new CapturesIterator(null, text.bytes);
     }
 
-    /** {@link #replace(String, String)} over UTF-8 text. A half character at either end of a piece is written as U+FFFD. */
+    /**
+     * {@link #replace(String, String)} over UTF-8 text. A half character at either end of a piece is written as U+FFFD.
+     */
     public Utf8Text replace(Utf8Text text, String replacement) {
         byte[] out = Text8.replace(this, text.bytes, Text8.encode(replacement), flags.global());
         return out == text.bytes ? text : Utf8Text.wrap(out);
@@ -559,9 +654,9 @@ public final class Regex {
         return isMatch(Utf8Text.of(text), start);
     }
 
-    /** {@link #tryIsMatch(String, Duration)} over UTF-8 bytes. */
-    public boolean tryIsMatch(byte[] text, Duration limit) {
-        return tryIsMatch(Utf8Text.of(text), limit);
+    /** {@link #isMatch(String, Duration)} over UTF-8 bytes. */
+    public boolean isMatch(byte[] text, Duration limit) {
+        return isMatch(Utf8Text.of(text), limit);
     }
 
     /** {@link #find(String)} over UTF-8 bytes. */
@@ -574,9 +669,9 @@ public final class Regex {
         return find(Utf8Text.of(text), start);
     }
 
-    /** {@link #tryFind(String, int, Duration)} over UTF-8 bytes. */
-    public Match tryFind(byte[] text, int start, Duration limit) {
-        return tryFind(Utf8Text.of(text), start, limit);
+    /** {@link #find(String, int, Duration)} over UTF-8 bytes. */
+    public Match find(byte[] text, int start, Duration limit) {
+        return find(Utf8Text.of(text), start, limit);
     }
 
     /** {@link #findAll(String)} over UTF-8 bytes. */
@@ -599,9 +694,9 @@ public final class Regex {
         return captures(Utf8Text.of(text), start);
     }
 
-    /** {@link #tryCaptures(String, int, Duration)} over UTF-8 bytes. */
-    public Captures tryCaptures(byte[] text, int start, Duration limit) {
-        return tryCaptures(Utf8Text.of(text), start, limit);
+    /** {@link #captures(String, int, Duration)} over UTF-8 bytes. */
+    public Captures captures(byte[] text, int start, Duration limit) {
+        return captures(Utf8Text.of(text), start, limit);
     }
 
     /** {@link #captures(Captures, String, int)} over UTF-8 bytes. */
@@ -671,11 +766,11 @@ public final class Regex {
 
         /** The next match from {@code at} into {@code slots} when it is given: its span, or negative for none. */
         final long exec(int at, int[] slots) {
-            return text16 != null ? Text16.exec(Regex.this, text16, at, flags.sticky(), 0, slots)
-                    : Text8.exec(Regex.this, text8, at, flags.sticky(), 0, slots);
+            return text16 != null ? Text16.exec(Regex.this, text16, at, flags.sticky(), timeoutNanos, slots)
+                    : Text8.exec(Regex.this, text8, at, flags.sticky(), timeoutNanos, slots);
         }
 
-        /** The next item from {@code at}, or {@code null}; {@code span} is set to where it is. */
+        /** The next item from {@code at}, or {@code null}. */
         abstract T step(int at);
 
         abstract long span(T item);
@@ -683,7 +778,13 @@ public final class Regex {
         @Override
         public final boolean hasNext() {
             if (next == null && !done) {
-                T item = step(at);
+                T item;
+                try {
+                    item = step(at);
+                } catch (MatchLimitException e) {
+                    done = true;
+                    throw e;
+                }
                 if (item == null) {
                     done = true;
                 } else {

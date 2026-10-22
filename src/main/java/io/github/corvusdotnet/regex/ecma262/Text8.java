@@ -11,24 +11,24 @@ import java.util.function.Function;
 
 /**
  * What {@link Regex} does over byte[] text: exec, and {@code String.prototype.replace} and {@code split} over a match
- * ({@code GetSubstitution} and {@code RegExp.prototype[Symbol.split]}, {@code replace.rs}). The template is expanded once
- * for each encoding by tools/expand.py.
+ * ({@code GetSubstitution} and {@code RegExp.prototype[Symbol.split]}, {@code replace.rs}). The template is expanded
+ * once for each encoding by tools/expand.py.
  */
 final class Text8 {
     private Text8() {}
 
     /**
-     * The first match at or after {@code start} (at {@code start} alone with {@code sticky}), packed as
-     * {@link Matcher8#span} does, or one of the codes for no match and for a match abandoned at its limit. When
+     * The first match at or after {@code start} (at {@code start} alone with {@code sticky}), packed as {@link
+     * Matcher8#span} does, or -1 for none; a match that reaches its limit throws {@link MatchLimitException}. When
      * {@code slots} is given it receives what each group captured: the start and end of the match, then of each group,
      * -1 for a group that did not take part.
      */
     static long exec(Regex re, byte[] input, int start, boolean sticky, long limitNanos, int[] slots) {
         start = Utf8.normalize(input, start, re.unicode);
         if (slots == null) {
-            return Matcher8.exec(re.prog, input, start, sticky, limitNanos, null, 0);
+            return Regex.checked(Matcher8.exec(re.prog, input, start, sticky, limitNanos, null, 0));
         }
-        long found = Matcher8.exec(re.capsProgram(), input, start, sticky, limitNanos, slots, 2);
+        long found = Regex.checked(Matcher8.exec(re.capsProgram(), input, start, sticky, limitNanos, slots, 2));
         if (found >= 0) {
             slots[0] = Regex.from(found);
             slots[1] = Regex.to(found);
@@ -150,7 +150,8 @@ final class Text8 {
             if (Character.isHighSurrogate(c) && k + 1 < s.length() && Character.isLowSurrogate(s.charAt(k + 1))) {
                 k++;
             } else if (Character.isSurrogate(c)) {
-                throw new IllegalArgumentException("the string has a lone surrogate at " + k + ", which UTF-8 cannot hold");
+                throw new IllegalArgumentException(
+                        "the string has a lone surrogate at " + k + ", which UTF-8 cannot hold");
             }
         }
         return s.getBytes(StandardCharsets.UTF_8);
@@ -172,7 +173,10 @@ final class Text8 {
         out.append(encode(s));
     }
 
-    /** Replaces the first match, or every match with {@code all}, by the template; the text itself when none matches. */
+    /**
+     * Replaces the first match, or every match with {@code all}, by the template; the text itself when none matches.
+     * Each match has the pattern's timeout.
+     */
     static byte[] replace(Regex re, byte[] input, byte[] template, boolean all) {
         int[] slots = new int[2 * re.capturesLength()];
         boolean sticky = re.flags.sticky();
@@ -180,7 +184,7 @@ final class Text8 {
         int last = 0;
         int at = 0;
         while (true) {
-            long found = exec(re, input, at, sticky, 0, slots);
+            long found = exec(re, input, at, sticky, re.timeoutNanos, slots);
             if (found < 0) {
                 break;
             }
@@ -212,7 +216,7 @@ final class Text8 {
         int at = 0;
         while (true) {
             Captures caps = new Captures(re.info);
-            long found = exec(re, input, at, sticky, 0, caps.slots);
+            long found = exec(re, input, at, sticky, re.timeoutNanos, caps.slots);
             if (found < 0) {
                 break;
             }
@@ -324,7 +328,7 @@ final class Text8 {
         }
         int[] slots = new int[2 * re.capturesLength()];
         if (size == 0) {
-            if (exec(re, input, 0, true, 0, slots) < 0) {
+            if (exec(re, input, 0, true, re.timeoutNanos, slots) < 0) {
                 out.add(piece(input, 0, 0));
             }
             return out;
@@ -332,7 +336,7 @@ final class Text8 {
         int p = 0;
         int q = 0;
         while (q < size) {
-            long found = exec(re, input, q, false, 0, slots);
+            long found = exec(re, input, q, false, re.timeoutNanos, slots);
             if (found < 0) {
                 break;
             }

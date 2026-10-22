@@ -34,7 +34,7 @@ class PatternEngineTest {
         /** The answer, or {@code null} when the match reached its limit. */
         Boolean tryValidate(String text) {
             try {
-                return re.tryIsMatch(text, limit);
+                return re.isMatch(text, limit);
             } catch (MatchLimitException e) {
                 return null;
             }

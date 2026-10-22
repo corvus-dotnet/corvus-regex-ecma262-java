@@ -5,7 +5,9 @@ import java.util.List;
 
 /** What every match of a pattern shares: the number of groups and their names ({@code GroupInfo} of regex.rs). */
 final class GroupInfo {
-    /** A group name, in UTF-16 and in UTF-8, and the groups that have it (more than one only in separate alternatives). */
+    /**
+     * A group name, in UTF-16 and in UTF-8, and the groups that have it (more than one only in separate alternatives).
+     */
     static final class Name {
         final String name;
         final byte[] name8;

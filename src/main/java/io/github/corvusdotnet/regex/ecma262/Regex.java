@@ -69,6 +69,13 @@ public final class Regex {
     final long timeoutNanos;
     /** The size the parser counted for the pattern. */
     final int size;
+    /**
+     * The automaton of the pattern over ASCII text ({@link Dfa}), built on the first match that wants it; {@link
+     * #NO_DFA} when the pattern has none.
+     */
+    private volatile Object dfa;
+
+    private static final Object NO_DFA = new Object();
 
     private Regex(String pattern, Flags flags, long timeoutNanos, Parser.Parsed parsed) {
         this.pattern = pattern;
@@ -78,7 +85,24 @@ public final class Regex {
         this.regular = !parsed.parser.needsBacktracking && Re2.cost(parsed.root) <= Re2.MAX_COST;
         this.size = parsed.parser.size;
         this.info = new GroupInfo(parsed.parser.groupCount(), parsed.parser.groupNames());
+        if (regular && !shallow(pattern, flags.unicodeSets())) {
+            // The automaton is built from the syntax tree, so that of a pattern that nests deeply is built here, on
+            // the deep thread, and not on the stack of the thread that first matches.
+            Dfa d = Dfa.build(parsed.root);
+            this.dfa = d == null ? NO_DFA : d;
+        }
         this.prog = Compiler.compileProgram(parsed.root, unicode, -1);
+    }
+
+    /** The automaton of the pattern, built the first time; {@code null} when it has none. */
+    Dfa dfa() {
+        Object d = dfa;
+        if (d == null) {
+            Dfa built = Dfa.build(Parser.parseWith(pattern, flags.syntax()).root);
+            d = built == null ? NO_DFA : built;
+            dfa = d;
+        }
+        return d == NO_DFA ? null : (Dfa) d;
     }
 
     /**
@@ -378,7 +402,7 @@ public final class Regex {
      * or the memory the match takes.
      */
     public boolean isMatch(String text) {
-        return Text16.exec(this, text, 0, flags.sticky(), timeoutNanos, null) >= 0;
+        return Text16.test(this, text, 0, timeoutNanos);
     }
 
     /**
@@ -386,7 +410,7 @@ public final class Regex {
      */
     public boolean isMatch(String text, int start) {
         checkStart(start);
-        return Text16.exec(this, text, start, flags.sticky(), timeoutNanos, null) >= 0;
+        return Text16.test(this, text, start, timeoutNanos);
     }
 
     /**
@@ -395,7 +419,7 @@ public final class Regex {
      * {@link #compile(String, Flags, Duration)}).
      */
     public boolean isMatch(String text, Duration limit) {
-        return (Text16.exec(this, text, 0, flags.sticky(), nanos(limit), null)) >= 0;
+        return Text16.test(this, text, 0, nanos(limit));
     }
 
     /**
@@ -520,18 +544,18 @@ public final class Regex {
 
     /** {@link #isMatch(String)} over UTF-8 text. */
     public boolean isMatch(Utf8Text text) {
-        return Text8.exec(this, text.bytes, 0, flags.sticky(), timeoutNanos, null) >= 0;
+        return Text8.test(this, text.bytes, 0, timeoutNanos);
     }
 
     /** {@link #isMatch(String, int)} over UTF-8 text; {@code start} is a byte offset. */
     public boolean isMatch(Utf8Text text, int start) {
         checkStart(start);
-        return Text8.exec(this, text.bytes, start, flags.sticky(), timeoutNanos, null) >= 0;
+        return Text8.test(this, text.bytes, start, timeoutNanos);
     }
 
     /** {@link #isMatch(String, Duration)} over UTF-8 text. */
     public boolean isMatch(Utf8Text text, Duration limit) {
-        return (Text8.exec(this, text.bytes, 0, flags.sticky(), nanos(limit), null)) >= 0;
+        return Text8.test(this, text.bytes, 0, nanos(limit));
     }
 
     /** {@link #find(String)} over UTF-8 text. */

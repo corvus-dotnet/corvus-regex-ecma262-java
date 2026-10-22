@@ -32,6 +32,24 @@ final class Text16 {
         return found;
     }
 
+    /**
+     * Whether the pattern matches at or after {@code start} (at {@code start} alone with the y flag): by the automaton
+     * where the pattern has one, the search starts at 0 and the text is ASCII, and otherwise by {@link #exec}.
+     */
+    static boolean test(Regex re, String input, int start, long limitNanos) {
+        boolean sticky = re.flags.sticky();
+        if (start == 0 && !sticky && re.regular) {
+            Dfa dfa = re.dfa();
+            if (dfa != null) {
+                int matched = dfa.isMatch(input);
+                if (matched != Dfa.UNDECIDED) {
+                    return matched == 1;
+                }
+            }
+        }
+        return exec(re, input, start, sticky, limitNanos, null) >= 0;
+    }
+
     /** The position a global search goes on from after a match {@code from..to}. */
     static int nextStart(Regex re, String input, int from, int to) {
         return to == from ? Utf16.advance(input, to, re.unicode) : to;

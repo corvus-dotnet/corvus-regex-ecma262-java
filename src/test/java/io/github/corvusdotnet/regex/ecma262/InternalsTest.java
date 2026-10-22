@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 /**
  * The tests of the engine's parts, ported from the Rust crate's tests.rs, which ports the tests of the Go package. The
  * answers they expect are V8's, in v8_cases.json, v8_oracle.json and size_cases.json (the Rust crate's tests/data).
- * The tests of the automaton and of the searches for where a match starts come with them, in step 2 of the port.
+ * The tests of the searches for where a match starts come with them, in step 2 of the port.
  */
 class InternalsTest {
     static final int NODE_SIZE = 32;
@@ -976,9 +976,96 @@ class InternalsTest {
         }
     }
 
-    /** The answers of the automaton's table, from the matcher until the automaton comes (step 2). */
+    /** The texts of the differential tests: the empty text, each piece of the alphabet, then random runs of them. */
+    static List<String> differentialInputs(int n) {
+        String[] alphabet = {"a", "b", "c", "z", "A", "X", "Z", "0", "1", "5", "9", "_", "-", ".", ":", "/", "@", "#",
+            "$", "*", "!", "{", "}", "|", " ", "\n", "\r", "\t", "\u00a0", "\u00e9", "\u00b5", "\uD83D\uDE00",
+            "\uD83D\uDC32", "\u2028", "\uFFFD", "x-", "es", "ES", "ms", "txt", "Au", "to", "No", "ne", "2015", "Co", "re",
+            "20", "15", "22", "2", ",", "a,", "ab,", "a-", "foo", "bar", "\u03b1", "\u03a9", "\u0663", "\\", "&", "(", ")",
+            "[", "]", "^", "+", "?", "<", ">", "=", "%"};
+        Xorshift seed = new Xorshift(0x2545f491);
+        List<String> inputs = new ArrayList<>();
+        inputs.add("");
+        inputs.addAll(List.of(alphabet));
+        while (inputs.size() < n) {
+            int k = 1 + seed.below(8);
+            StringBuilder s = new StringBuilder();
+            for (int i = 0; i < k; i++) {
+                s.append(alphabet[seed.below(alphabet.length)]);
+            }
+            inputs.add(s.toString());
+        }
+        return inputs;
+    }
+
+    /** The automaton of a pattern, as the members use it: {@code null} for a pattern that is not regular or has none. */
+    static Dfa automatonOf(Regex re) {
+        return re.regular ? re.dfa() : null;
+    }
+
+    /**
+     * The automaton and the backtracking matcher give the same answer, for every pattern of the oracle and of the
+     * JSON-Schema-Test-Suite that has an automaton, on random texts.
+     */
     @Test
-    void automatonAnswers() {
+    void theAutomatonAndTheMatcherAgree() throws IOException {
+        TreeSet<String> patterns = new TreeSet<>();
+        for (Object h : array(get(ORACLE, "hand"))) {
+            patterns.add(text(get(h, "p")));
+        }
+        for (Object f : array(get(ORACLE, "flagged"))) {
+            patterns.add("(?" + text(get(f, "f")) + ":" + text(get(f, "p")) + ")");
+        }
+        patterns.addAll(List.of("\uFFFD", "^[^\uFFFD]+$", "^\uFFFD+$", "^.$", "^..$", "^[^a]$", "\\P{Any}",
+                "^\\p{Any}*$", "^[\\s\\S]{2,4}$", "^(?:\\p{L}|\\p{N})+$", "\\b\\w+\\b", "\\B", "^$", "$", "^", "(?:)",
+                "^(?:a{2}){2,3}$", "^(?:a|b|ab){1,4}?c", "^.{0,300}$", "^(?:[a-z]{1,3}\\d?){2,5}$",
+                "^[\\u0000-\uFFFF]+$", "^[\\u{10000}-\\u{10ffff}]+$", "(?:a{50}){30}", "^a{1001}$", "^(?:a?){1001}$",
+                "\\x{41}", "^\\u{2}$"));
+        TreeSet<String> suite = suiteCorpus();
+        if (suite != null) {
+            patterns.addAll(suite);
+        }
+        List<String> inputs = differentialInputs(1500);
+        int regular = 0;
+        int automata = 0;
+        int decided = 0;
+        for (String p : patterns) {
+            if (!compiles(p)) {
+                continue;
+            }
+            Regex re = compile(p);
+            if (!re.regular) {
+                continue;
+            }
+            regular++;
+            Dfa dfa = automatonOf(re);
+            for (String s : inputs) {
+                assertEquals(matchBacktrack(re, s, null), matchLimit(re, s, null),
+                        p + " on " + s + ": the automaton and the backtracking matcher");
+                if (dfa != null && dfa.isMatch(s.getBytes(StandardCharsets.UTF_8)) != Dfa.UNDECIDED) {
+                    decided++;
+                }
+            }
+            automata += dfa != null ? 1 : 0;
+        }
+        assertTrue(regular > 200 && automata > 100 && decided > 100000,
+                regular + " patterns, " + automata + " automata, " + decided);
+    }
+
+    @Test
+    void automaton() {
+        Object[][] which = {
+            {"^[a-z][a-z0-9_]*$", true}, {"(base64key|awskms)://(.*)", true},
+            {"^[Ee][Ss]20(1[5-9]|2[0-2])(\\.[a-z]+)?$", true}, {"^$", true}, {"$", true}, {"a*", true},
+            {"^(?:a?){40}$", true}, {"\u00e9+", true}, {"\\bfoo", true}, {"\\b\\d{1,2}/\\d{1,2}/\\d{2,4}\\b", true},
+            {"(?i:\\bk)", false}, {"^a{600}$", false}, {"(?:a{50}){12}", false}, {"^(?:[a-z]{1,3}\\d?){2,90}$", false},
+            {"(?=a)b", false}, {"(a)\\1", false},
+        };
+        for (Object[] t : which) {
+            Regex re = compile((String) t[0]);
+            re.isMatch("");
+            assertEquals(t[1], automatonOf(re) != null, t[0] + ": automaton");
+        }
         Object[][] table = {
             {"^$", "", true}, {"^$", "a", false}, {"\\bfoo\\b", "a foo b", true}, {"\\bfoo\\b", "a foob", false},
             {"\\bfoo", "afoo", false}, {"\\B", "", true}, {"\\b", "", false}, {"\\b", " ", false}, {"\\b", "a", true},
@@ -992,11 +1079,19 @@ class InternalsTest {
         };
         for (Object[] t : table) {
             Regex re = compile((String) t[0]);
-            assertEquals(t[2], re.isMatch((String) t[1]), t[0] + " on " + t[1]);
-            assertEquals(t[2], matchBacktrack(re, (String) t[1], null), t[0] + " on " + t[1] + " (backtracking)");
+            String s = (String) t[1];
+            assertEquals(t[2], re.isMatch(s), t[0] + " on " + s);
+            assertEquals(t[2], matchBacktrack(re, s, null), t[0] + " on " + s + " (the backtracking matcher)");
+            Dfa dfa = automatonOf(re);
+            assertNotNull(dfa, t[0] + ": no automaton");
+            assertEquals((Boolean) t[2] ? 1 : 0, dfa.isMatch(s.getBytes(StandardCharsets.UTF_8)), t[0] + " on " + s
+                    + ": the automaton");
+            assertEquals((Boolean) t[2] ? 1 : 0, dfa.isMatch(s), t[0] + " on " + s + ": the automaton over UTF-16");
         }
         Regex re = compile("^[a-z]+$");
         assertTrue(re.isMatch("abc") && !re.isMatch("caf\u00e9"));
+        assertEquals(Dfa.UNDECIDED, automatonOf(re).isMatch("caf\u00e9".getBytes(StandardCharsets.UTF_8)));
+        assertEquals(Dfa.UNDECIDED, automatonOf(re).isMatch("caf\u00e9"));
         re = compile("^\\p{L}+$");
         assertTrue(re.isMatch("caf\u00e9") && !re.isMatch("caf\u00e9 1") && re.isMatch("cafe"));
     }

@@ -4,3 +4,4 @@ target/
 *.iml
 .vscode/
 __pycache__/
+tools/dataset/out/

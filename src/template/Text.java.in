@@ -1,0 +1,409 @@
+package io.github.corvusdotnet.regex.ecma262;
+
+//#if UTF8
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+//#endif
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Function;
+
+/**
+ * What {@link Regex} does over $INPUT$ text: exec, and {@code String.prototype.replace} and {@code split} over a match
+ * ({@code GetSubstitution} and {@code RegExp.prototype[Symbol.split]}, {@code replace.rs}). The template is expanded once
+ * for each encoding by tools/expand.py.
+ */
+final class Text$T$ {
+    private Text$T$() {}
+
+    /**
+     * The first match at or after {@code start} (at {@code start} alone with {@code sticky}), packed as
+     * {@link Matcher$T$#span} does, or one of the codes for no match and for a match abandoned at its limit. When
+     * {@code slots} is given it receives what each group captured: the start and end of the match, then of each group,
+     * -1 for a group that did not take part.
+     */
+    static long exec(Regex re, $INPUT$ input, int start, boolean sticky, long limitNanos, int[] slots) {
+        start = $CODEC$.normalize(input, start, re.unicode);
+        if (slots == null) {
+            return Matcher$T$.exec(re.prog, input, start, sticky, limitNanos, null, 0);
+        }
+        long found = Matcher$T$.exec(re.capsProgram(), input, start, sticky, limitNanos, slots, 2);
+        if (found >= 0) {
+            slots[0] = Regex.from(found);
+            slots[1] = Regex.to(found);
+        }
+        return found;
+    }
+
+    /** The position a global search goes on from after a match {@code from..to}. */
+    static int nextStart(Regex re, $INPUT$ input, int from, int to) {
+        return to == from ? $CODEC$.advance(input, to, re.unicode) : to;
+    }
+
+//#if UTF8
+    /** Appends the units from..to, with a half character at either end written as U+FFFD. */
+    static void pushLossy(Bytes out, byte[] input, int from, int to) {
+        if (from >= to) {
+            return;
+        }
+        if (Utf8.insideFour(input, from)) {
+            out.append(REPLACEMENT_CHARACTER);
+            from += 2;
+        }
+        boolean tail = to < input.length && Utf8.insideFour(input, to);
+        if (tail) {
+            to -= 2;
+        }
+        if (from < to) {
+            out.append(input, from, to);
+        }
+        if (tail) {
+            out.append(REPLACEMENT_CHARACTER);
+        }
+    }
+
+    private static final byte[] REPLACEMENT_CHARACTER = {(byte) 0xEF, (byte) 0xBF, (byte) 0xBD};
+
+    /** The units from..to, with a half character at either end written as U+FFFD. */
+    static byte[] piece(byte[] input, int from, int to) {
+        Bytes out = new Bytes(to - from + 6);
+        pushLossy(out, input, from, to);
+        return out.toArray();
+    }
+
+    /** The units from..to as a string, with a half character at either end written as U+FFFD. */
+    static String string(byte[] input, int from, int to) {
+        if (from < to && (Utf8.insideFour(input, from) || to < input.length && Utf8.insideFour(input, to))) {
+            return new String(piece(input, from, to), StandardCharsets.UTF_8);
+        }
+        return new String(input, from, to - from, StandardCharsets.UTF_8);
+    }
+
+    private static final VarHandle LONGS = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
+
+    /** Where the bytes stop being UTF-8, or -1 when they are UTF-8 to their end. */
+    static int firstInvalid(byte[] p) {
+        int n = p.length;
+        int k = 0;
+        while (k < n) {
+            if (k + 8 <= n && ((long) LONGS.get(p, k) & 0x8080808080808080L) == 0) {
+                k += 8;
+                continue;
+            }
+            int b = p[k] & 0xFF;
+            if (b < 0x80) {
+                k++;
+                continue;
+            }
+            int width;
+            int lo = 0x80;
+            int hi = 0xBF;
+            if (b >= 0xC2 && b <= 0xDF) {
+                width = 2;
+            } else if (b >= 0xE0 && b <= 0xEF) {
+                width = 3;
+                if (b == 0xE0) {
+                    lo = 0xA0;
+                } else if (b == 0xED) {
+                    hi = 0x9F;
+                }
+            } else if (b >= 0xF0 && b <= 0xF4) {
+                width = 4;
+                if (b == 0xF0) {
+                    lo = 0x90;
+                } else if (b == 0xF4) {
+                    hi = 0x8F;
+                }
+            } else {
+                return k;
+            }
+            if (k + width > n) {
+                return k;
+            }
+            int c = p[k + 1] & 0xFF;
+            if (c < lo || c > hi) {
+                return k;
+            }
+            for (int j = 2; j < width; j++) {
+                c = p[k + j] & 0xFF;
+                if (c < 0x80 || c > 0xBF) {
+                    return k;
+                }
+            }
+            k += width;
+        }
+        return -1;
+    }
+
+    /** Throws {@link IllegalArgumentException} where the bytes stop being UTF-8. */
+    static void check(byte[] p) {
+        int at = firstInvalid(p);
+        if (at >= 0) {
+            throw new IllegalArgumentException("the text is not UTF-8 at byte " + at);
+        }
+    }
+
+    /** The UTF-8 of a string, which may not have a lone surrogate. */
+    static byte[] encode(String s) {
+        for (int k = 0; k < s.length(); k++) {
+            char c = s.charAt(k);
+            if (Character.isHighSurrogate(c) && k + 1 < s.length() && Character.isLowSurrogate(s.charAt(k + 1))) {
+                k++;
+            } else if (Character.isSurrogate(c)) {
+                throw new IllegalArgumentException("the string has a lone surrogate at " + k + ", which UTF-8 cannot hold");
+            }
+        }
+        return s.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static Bytes sink(byte[] input) {
+        return new Bytes(input.length + 16);
+    }
+
+    private static byte[] done(Bytes out) {
+        return out.toArray();
+    }
+
+    private static void pushUnit(Bytes out, byte[] template, int k) {
+        out.append(template[k]);
+    }
+
+    private static void pushString(Bytes out, String s) {
+        out.append(encode(s));
+    }
+//#else
+    static void pushLossy(StringBuilder out, String input, int from, int to) {
+        if (from < to) {
+            out.append(input, from, to);
+        }
+    }
+
+    static String piece(String input, int from, int to) {
+        return input.substring(from, to);
+    }
+
+    private static StringBuilder sink(String input) {
+        return new StringBuilder(input.length() + 16);
+    }
+
+    private static String done(StringBuilder out) {
+        return out.toString();
+    }
+
+    private static void pushUnit(StringBuilder out, String template, int k) {
+        out.append(template.charAt(k));
+    }
+
+    private static void pushString(StringBuilder out, String s) {
+        out.append(s);
+    }
+//#endif
+
+    /** Replaces the first match, or every match with {@code all}, by the template; the text itself when none matches. */
+    static $INPUT$ replace(Regex re, $INPUT$ input, $INPUT$ template, boolean all) {
+        int[] slots = new int[2 * re.capturesLength()];
+        boolean sticky = re.flags.sticky();
+//#if UTF8
+        Bytes out = null;
+//#else
+        StringBuilder out = null;
+//#endif
+        int last = 0;
+        int at = 0;
+        while (true) {
+            long found = exec(re, input, at, sticky, 0, slots);
+            if (found < 0) {
+                break;
+            }
+            int from = Regex.from(found);
+            int to = Regex.to(found);
+            if (out == null) {
+                out = sink(input);
+            }
+            pushLossy(out, input, last, from);
+            substitute(out, input, slots, re.info, template);
+            last = to;
+            if (!all) {
+                break;
+            }
+            at = nextStart(re, input, from, to);
+        }
+        if (out == null) {
+            return input;
+        }
+        pushLossy(out, input, last, LEN(input));
+        return done(out);
+    }
+
+    /** Replaces the first match, or every match with {@code all}, by what the function returns for its captures. */
+    static $INPUT$ replaceWith(Regex re, $INPUT$ input, boolean all, Function<Captures, String> f) {
+        boolean sticky = re.flags.sticky();
+//#if UTF8
+        Bytes out = null;
+//#else
+        StringBuilder out = null;
+//#endif
+        int last = 0;
+        int at = 0;
+        while (true) {
+            Captures caps = new Captures(re.info);
+            long found = exec(re, input, at, sticky, 0, caps.slots);
+            if (found < 0) {
+                break;
+            }
+//#if UTF8
+            caps.text8 = input;
+//#else
+            caps.text16 = input;
+//#endif
+            int from = Regex.from(found);
+            int to = Regex.to(found);
+            if (out == null) {
+                out = sink(input);
+            }
+            pushLossy(out, input, last, from);
+            pushString(out, f.apply(caps));
+            last = to;
+            if (!all) {
+                break;
+            }
+            at = nextStart(re, input, from, to);
+        }
+        if (out == null) {
+            return input;
+        }
+        pushLossy(out, input, last, LEN(input));
+        return done(out);
+    }
+
+    /** Appends the template with each {@code $} form replaced ({@code GetSubstitution}). */
+//#if UTF8
+    private static void substitute(Bytes out, byte[] input, int[] slots, GroupInfo info, byte[] template) {
+//#else
+    private static void substitute(StringBuilder out, String input, int[] slots, GroupInfo info, String template) {
+//#endif
+        int groups = slots.length / 2 - 1;
+        int from = slots[0];
+        int to = slots[1];
+        int n = LEN(template);
+        int k = 0;
+        while (k < n) {
+            int c = AT(template, k);
+            if (c != '$' || k + 1 >= n) {
+                pushUnit(out, template, k);
+                k++;
+                continue;
+            }
+            int next = AT(template, k + 1);
+            if (next == '$') {
+                pushUnit(out, template, k);
+                k += 2;
+            } else if (next == '&') {
+                pushLossy(out, input, from, to);
+                k += 2;
+            } else if (next == '`') {
+                pushLossy(out, input, 0, from);
+                k += 2;
+            } else if (next == '\'') {
+                pushLossy(out, input, to, LEN(input));
+                k += 2;
+            } else if (next >= '0' && next <= '9') {
+                int d1 = next - '0';
+                int d2 = k + 2 < n ? AT(template, k + 2) - '0' : -1;
+                if (d2 >= 0 && d2 <= 9 && d1 * 10 + d2 >= 1 && d1 * 10 + d2 <= groups) {
+                    int g = d1 * 10 + d2;
+                    if (slots[2 * g] >= 0) {
+                        pushLossy(out, input, slots[2 * g], slots[2 * g + 1]);
+                    }
+                    k += 3;
+                } else if (d1 >= 1 && d1 <= groups) {
+                    if (slots[2 * d1] >= 0) {
+                        pushLossy(out, input, slots[2 * d1], slots[2 * d1 + 1]);
+                    }
+                    k += 2;
+                } else {
+                    pushUnit(out, template, k);
+                    k++;
+                }
+            } else if (next == '<') {
+                // Without a named group `$<` is itself. With one, the name runs to the next `>`; a name that is no
+                // group's is the empty string, and a `<` with no `>` after it is itself.
+                int close = k + 2;
+                while (close < n && AT(template, close) != '>') {
+                    close++;
+                }
+                if (close < n && info.names.length > 0) {
+                    int[] named = info.named(template, k + 2, close);
+                    if (named != null) {
+                        for (int g : named) {
+                            if (slots[2 * g] >= 0) {
+                                pushLossy(out, input, slots[2 * g], slots[2 * g + 1]);
+                                break;
+                            }
+                        }
+                    }
+                    k = close + 1;
+                } else {
+                    pushUnit(out, template, k);
+                    k++;
+                }
+            } else {
+                pushUnit(out, template, k);
+                k++;
+            }
+        }
+    }
+
+    /**
+     * Splits the text around the matches ({@code RegExp.prototype[Symbol.split]}), with at most {@code limit} items,
+     * {@code null} for a group that did not take part. The flags g and y do not apply: split searches with a copy of
+     * the pattern that is sticky, from each position in turn, which is what a search from the position finds first.
+     */
+    static List<$INPUT$> split(Regex re, $INPUT$ input, long limit) {
+        int size = LEN(input);
+        List<$INPUT$> out = new ArrayList<>();
+        if (limit == 0) {
+            return out;
+        }
+        int[] slots = new int[2 * re.capturesLength()];
+        if (size == 0) {
+            if (exec(re, input, 0, true, 0, slots) < 0) {
+                out.add(piece(input, 0, 0));
+            }
+            return out;
+        }
+        int p = 0;
+        int q = 0;
+        while (q < size) {
+            long found = exec(re, input, q, false, 0, slots);
+            if (found < 0) {
+                break;
+            }
+            int from = Regex.from(found);
+            if (from >= size) {
+                break;
+            }
+            int e = Math.min(Regex.to(found), size);
+            if (e == p) {
+                q = $CODEC$.advance(input, from, re.unicode);
+                continue;
+            }
+            out.add(piece(input, p, from));
+            if (out.size() == limit) {
+                return out;
+            }
+            p = e;
+            for (int g = 1; g < slots.length / 2; g++) {
+                out.add(slots[2 * g] >= 0 ? piece(input, slots[2 * g], slots[2 * g + 1]) : null);
+                if (out.size() == limit) {
+                    return out;
+                }
+            }
+            q = p;
+        }
+        out.add(piece(input, p, size));
+        return out;
+    }
+}

@@ -77,6 +77,29 @@ class SearchPrimitivesTest {
         }
     }
 
+    @Test
+    void theRangeSearchFindsTheFirstByteInTheRange() {
+        Xorshift seed = new Xorshift(0x3c6ef372);
+        int[][] ranges = {{'A', 'Z'}, {'F', 'T'}, {'0', '9'}, {0, 0x7F}, {'a', 'a'}};
+        for (int round = 0; round < 300; round++) {
+            byte[] h = new byte[seed.below(100)];
+            for (int k = 0; k < h.length; k++) {
+                h[k] = (byte) seed.below(256);
+            }
+            for (int[] r : ranges) {
+                for (int from = 0; from <= h.length; from++) {
+                    int want = -1;
+                    for (int k = from; k < h.length && want < 0; k++) {
+                        if (h[k] >= r[0] && h[k] <= r[1]) {
+                            want = k;
+                        }
+                    }
+                    assertEquals(want, Swar.indexOfBetween(h, from, h.length, r[0], r[1]), r[0] + ".." + r[1]);
+                }
+            }
+        }
+    }
+
     static int first(byte[] h, int from, int end, int a, int b, int c) {
         for (int k = from; k < end; k++) {
             int x = h[k] & 0xFF;

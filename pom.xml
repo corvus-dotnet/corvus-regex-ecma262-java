@@ -40,6 +40,8 @@
     <junit.version>6.1.3</junit.version>
     <!-- Extra JVM arguments for the tests. -->
     <corvusArgLine></corvusArgLine>
+    <!-- JaCoCo's agent, which prepare-agent sets; empty where a test goal runs without it (the tests on Java 17). -->
+    <argLine></argLine>
   </properties>
 
   <dependencyManagement>
@@ -69,8 +71,13 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.14.1</version>
         <configuration>
+          <!-- Built by JDK 25 for Java 17: the Vector API's searches (VectorBytes) compile against the incubating module
+               jdk.incubator.vector, whose warning javac names "incubating" only from JDK 25 on. Every other warning is
+               an error. -->
           <compilerArgs>
-            <arg>-Xlint:all</arg>
+            <arg>--add-modules</arg>
+            <arg>jdk.incubator.vector</arg>
+            <arg>-Xlint:all,-incubating</arg>
             <arg>-Werror</arg>
           </compilerArgs>
         </configuration>
@@ -83,6 +90,19 @@
           <argLine>@{argLine} ${corvusArgLine}</argLine>
         </configuration>
         <executions>
+          <!-- Every test again with the Vector API's searches, which a program takes by adding the module. -->
+          <execution>
+            <id>vector</id>
+            <goals>
+              <goal>test</goal>
+            </goals>
+            <configuration>
+              <argLine>@{argLine} --add-modules jdk.incubator.vector ${corvusArgLine}</argLine>
+              <systemPropertyVariables>
+                <corvus.test.vector>true</corvus.test.vector>
+              </systemPropertyVariables>
+            </configuration>
+          </execution>
           <!-- Zero allocation must not depend on the JIT's escape analysis removing allocations. -->
           <execution>
             <id>allocations-without-escape-analysis</id>
@@ -160,6 +180,11 @@
               <!-- Before Java 18, javadoc reads the sources it finds through the patched module in the platform's
                    encoding, whatever -encoding says (windows-1252 on Windows). -->
               <additionalJOption>-J-Dfile.encoding=UTF-8</additionalJOption>
+              <!-- The Vector API's searches read the incubating module, as javac does. -->
+              <additionalOptions>
+                <additionalOption>--add-modules</additionalOption>
+                <additionalOption>jdk.incubator.vector</additionalOption>
+              </additionalOptions>
             </configuration>
             <executions>
               <execution>

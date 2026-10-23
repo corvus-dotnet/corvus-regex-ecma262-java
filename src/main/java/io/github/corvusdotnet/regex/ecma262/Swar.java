@@ -42,15 +42,47 @@ final class Swar {
         return Long.numberOfTrailingZeros(flags) >>> 3;
     }
 
+    private static final long HIGHS = 0x8080808080808080L;
+
+    /**
+     * Whether some lane of {@code x} is zero: the cheap test, which flags every zero lane but may also flag a lane of 1
+     * above a zero lane. The loops use it to know that a block holds a byte they look for, and {@link #zeros} to find
+     * which; a finder that tests candidates (every one here) can take its flags as they are.
+     */
+    static long hasZero(long x) {
+        return (x - ONES) & ~x & HIGHS;
+    }
+
     /** The first position at or after {@code from} and before {@code n} whose byte is {@code b}; -1 for none. */
     static int indexOf(byte[] h, int from, int n, int b) {
         long v = broadcast(b);
         int at = from;
-        for (; at <= n - 16; at += 16) {
-            long x = eq(word(h, at), v);
-            long y = eq(word(h, at + 8), v);
-            if ((x | y) != 0) {
-                return x != 0 ? at + lane(x) : at + 8 + lane(y);
+        // Thirty-two bytes a step, tested together by the cheap test; the word that holds the byte is found after.
+        for (; at <= n - 32; at += 32) {
+            long w0 = word(h, at) ^ v;
+            long w1 = word(h, at + 8) ^ v;
+            long w2 = word(h, at + 16) ^ v;
+            long w3 = word(h, at + 24) ^ v;
+            if ((hasZero(w0) | hasZero(w1) | hasZero(w2) | hasZero(w3)) != 0) {
+                long z = zeros(w0);
+                if (z != 0) {
+                    return at + lane(z);
+                }
+                z = zeros(w1);
+                if (z != 0) {
+                    return at + 8 + lane(z);
+                }
+                z = zeros(w2);
+                if (z != 0) {
+                    return at + 16 + lane(z);
+                }
+                return at + 24 + lane(zeros(w3));
+            }
+        }
+        for (; at <= n - 8; at += 8) {
+            long z = zeros(word(h, at) ^ v);
+            if (z != 0) {
+                return at + lane(z);
             }
         }
         for (; at < n; at++) {
@@ -66,6 +98,14 @@ final class Swar {
         long va = broadcast(a);
         long vb = broadcast(b);
         int at = from;
+        for (; at <= n - 16; at += 16) {
+            long w0 = word(h, at);
+            long w1 = word(h, at + 8);
+            if ((hasZero(w0 ^ va) | hasZero(w0 ^ vb) | hasZero(w1 ^ va) | hasZero(w1 ^ vb)) != 0) {
+                long z = eq(w0, va) | eq(w0, vb);
+                return z != 0 ? at + lane(z) : at + 8 + lane(eq(w1, va) | eq(w1, vb));
+            }
+        }
         for (; at <= n - 8; at += 8) {
             long w = word(h, at);
             long x = eq(w, va) | eq(w, vb);
@@ -83,20 +123,70 @@ final class Swar {
 
     /** The first position at or after {@code from} and before {@code n} whose byte is {@code a}, {@code b} or {@code c}. */
     static int indexOf(byte[] h, int from, int n, int a, int b, int c) {
+        return indexOf(h, from, n, a, b, c, c);
+    }
+
+    /** The first position at or after {@code from} and before {@code n} whose byte is one of four. */
+    static int indexOf(byte[] h, int from, int n, int a, int b, int c, int d) {
         long va = broadcast(a);
         long vb = broadcast(b);
         long vc = broadcast(c);
+        long vd = broadcast(d);
         int at = from;
         for (; at <= n - 8; at += 8) {
             long w = word(h, at);
-            long x = eq(w, va) | eq(w, vb) | eq(w, vc);
-            if (x != 0) {
-                return at + lane(x);
+            if ((hasZero(w ^ va) | hasZero(w ^ vb) | hasZero(w ^ vc) | hasZero(w ^ vd)) != 0) {
+                return at + lane(eq(w, va) | eq(w, vb) | eq(w, vc) | eq(w, vd));
             }
         }
         for (; at < n; at++) {
             byte x = h[at];
-            if (x == (byte) a || x == (byte) b || x == (byte) c) {
+            if (x == (byte) a || x == (byte) b || x == (byte) c || x == (byte) d) {
+                return at;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The high bit of each lane of {@code x} that is an ASCII byte from {@code lo} to {@code hi} (both below 0x80):
+     * exact, since the seven low bits of a lane plus a constant below 0x80 cannot carry into the next lane.
+     */
+    static long between(long x, long lo, long hi) {
+        long t = x & LOW7;
+        return (t + lo) & ~(t + hi) & ~x & HIGHS;
+    }
+
+    /** The constants of {@link #between} for the bytes {@code lo} to {@code hi}. */
+    static long betweenLo(int lo) {
+        return broadcast(0x80 - lo);
+    }
+
+    static long betweenHi(int hi) {
+        return broadcast(0x7F - hi);
+    }
+
+    /** The first position at or after {@code from} and before {@code n} whose byte is from {@code lo} to {@code hi}. */
+    static int indexOfBetween(byte[] h, int from, int n, int lo, int hi) {
+        long vl = betweenLo(lo);
+        long vh = betweenHi(hi);
+        int at = from;
+        for (; at <= n - 16; at += 16) {
+            long z0 = between(word(h, at), vl, vh);
+            long z1 = between(word(h, at + 8), vl, vh);
+            if ((z0 | z1) != 0) {
+                return z0 != 0 ? at + lane(z0) : at + 8 + lane(z1);
+            }
+        }
+        for (; at <= n - 8; at += 8) {
+            long z = between(word(h, at), vl, vh);
+            if (z != 0) {
+                return at + lane(z);
+            }
+        }
+        for (; at < n; at++) {
+            int x = h[at];
+            if (x >= lo && x <= hi) {
                 return at;
             }
         }

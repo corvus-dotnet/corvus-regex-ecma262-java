@@ -25,6 +25,7 @@ ap.add_argument("--run", required=True)
 ap.add_argument("--v8", help="the V8 harness's own results, for a run whose harness did not run V8 itself")
 ap.add_argument("--out", required=True)
 ap.add_argument("--compliance-corvus", required=True)
+ap.add_argument("--compliance-corvus-vector", required=True, help="the data-set runner with the Vector API's searches")
 ap.add_argument("--compliance-tregex", required=True)
 ap.add_argument("--compliance-v8", help="V8's data-set run; absent for a run without V8 (V8=0)")
 ap.add_argument("--run-url", default="")
@@ -64,6 +65,10 @@ def compliance(path, note=None):
 ENGINES = [
     ("corvus-utf8", "corvus-regex-ecma262 UTF-8", "Java", facts.get("corvus-regex-ecma262", ""), compliance(args.compliance_corvus)),
     ("corvus-utf16", "corvus-regex-ecma262 UTF-16", "Java", facts.get("corvus-regex-ecma262", ""), compliance(args.compliance_corvus)),
+    ("corvus-utf8-vector", "corvus-regex-ecma262 UTF-8 (Vector API)", "Java", facts.get("corvus-regex-ecma262", ""),
+     compliance(args.compliance_corvus_vector, "the JVM started with --add-modules jdk.incubator.vector")),
+    ("corvus-utf16-vector", "corvus-regex-ecma262 UTF-16 (Vector API)", "Java", facts.get("corvus-regex-ecma262", ""),
+     compliance(args.compliance_corvus_vector, "the JVM started with --add-modules jdk.incubator.vector")),
     ("jdk", "java.util.regex", "Java", facts.get("jdk", ""), "not ECMA-262"),
     ("tregex", "TRegex", "Java", facts.get("tregex", ""), compliance(args.compliance_tregex,
         "judged over UTF-16 only, by the V8 runner (dataset.mjs) under GraalVM's Node, since GraalJS has no UTF-8 interface")),
@@ -106,7 +111,7 @@ else:
 data = {
     "meta": {
         "title": "corvus-regex-ecma262 for Java: the Industry benchmarks",
-        "lede": "This library over UTF-8 and UTF-16 beside java.util.regex, TRegex and V8 over the Industry workloads of dotnet/performance.",
+        "lede": "This library over UTF-8 and UTF-16, with its own searches and with the Vector API's, beside java.util.regex, TRegex and V8 over the Industry workloads of dotnet/performance.",
         "repo": "corvus-dotnet/corvus-regex-ecma262-java",
         "commit": facts.get("commit", "")[:7],
         "date": run.get("end") or facts.get("date", ""),
@@ -122,7 +127,8 @@ data = {
                  + ([["Spread", spread]] if spread else [])
                  + ([["Counts", "java.util.regex counts otherwise than V8 on " + str(len(differs)) + " workloads (each says so)"]] if differs else []),
         "method": "<p>Each figure is one count of every match a global search finds over the whole text, after an empty match going on one character later. "
-                  "This library runs with the workload's flags and u, java.util.regex with the pattern as it is and the flags i (with Unicode case), m and s, "
+                  "This library runs with the workload's flags and u, in each of its two modes: its own searches, and the Vector API's, "
+                  "which it takes where the JVM is started with --add-modules jdk.incubator.vector; java.util.regex with the pattern as it is and the flags i (with Unicode case), m and s, "
                   "TRegex (in GraalJS) and V8 with gu added, the two counted by the same JavaScript loop. "
                   "Each engine runs in its own process: this library and java.util.regex on the JDK of the run, TRegex on GraalVM's Node.</p>",
     },

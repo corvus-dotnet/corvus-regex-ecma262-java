@@ -247,11 +247,11 @@ final class Search {
         int find(byte[] h, int from) {
             switch (count) {
                 case 1:
-                    return Swar.indexOf(h, from, h.length, a);
+                    return Kernels.indexOf(h, from, h.length, a);
                 case 2:
-                    return Swar.indexOf(h, from, h.length, a, b);
+                    return Kernels.indexOf(h, from, h.length, a, b);
                 case 3:
-                    return Swar.indexOf(h, from, h.length, a, b, c);
+                    return Kernels.indexOf(h, from, h.length, a, b, c);
                 default:
                     boolean[] t = table;
                     for (int at = from; at < h.length; at++) {

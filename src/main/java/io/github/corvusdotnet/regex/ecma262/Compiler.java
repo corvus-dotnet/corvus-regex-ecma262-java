@@ -206,13 +206,13 @@ final class Compiler {
         return false;
     }
 
+    /** Keeps every counted repetition a loop, for the tests of the loops' needs and memo points. */
+    static boolean noUnroll;
+
     /**
      * Writes out a counted repetition: X{2,4} is X X (X (X)?)?, the optional copies one inside the other, so that a
      * copy is tried only when the one before it matched.
      */
-    /** Keeps every counted repetition a loop, for the tests of the loops' needs and memo points. */
-    static boolean noUnroll;
-
     private static Node unroll(Node n) {
         Node body = n.subs.get(0);
         List<Node> terms = new ArrayList<>();

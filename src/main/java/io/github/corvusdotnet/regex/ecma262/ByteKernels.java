@@ -1,0 +1,19 @@
+package io.github.corvusdotnet.regex.ecma262;
+
+/**
+ * The byte searches that vector code runs faster than SWAR: those of {@link Swar}, and the pair search's loop. {@link
+ * Kernels} takes the Vector API's ({@code VectorBytes}) where the JVM has the module {@code jdk.incubator.vector}, and
+ * SWAR otherwise.
+ */
+interface ByteKernels {
+    int indexOf(byte[] h, int from, int n, int b);
+
+    int indexOf(byte[] h, int from, int n, int a, int b);
+
+    int indexOf(byte[] h, int from, int n, int a, int b, int c, int d);
+
+    int indexOfBetween(byte[] h, int from, int n, int lo, int hi);
+
+    /** The pair search's {@link ByteFinder.Pair#find}. */
+    long pairFind(ByteFinder.Pair p, byte[] h, int from, int end);
+}

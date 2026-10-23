@@ -27,6 +27,12 @@ class AllocationTest {
         for (int r = 0; r < 300; r++) {
             work.run();
         }
+        // The Vector API's searches allocate an object for each operation until C2 has compiled them, which keeps the
+        // vectors in registers: run for long enough that it has.
+        long until = System.nanoTime() + (Kernels.vector() ? 1_500_000_000L : 0);
+        while (System.nanoTime() < until) {
+            work.run();
+        }
         // What the counter itself allocates, measured alone and subtracted.
         long overhead = -THREADS.getCurrentThreadAllocatedBytes() + THREADS.getCurrentThreadAllocatedBytes();
         long bytes = Long.MAX_VALUE;

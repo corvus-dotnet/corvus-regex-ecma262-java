@@ -29,7 +29,7 @@ import java.util.zip.GZIPInputStream;
  *
  * <pre>
  *   java -cp target/classes:tools/benchmarks/out Industry &lt;workloads.json&gt;
- *        [--engines corvus-utf8,corvus-utf16,jdk,tregex,v8] [--v8 &lt;industry.mjs&gt;] [--tregex &lt;GraalJS node&gt;]
+ *        [--engines corvus-utf8,corvus-utf16,corvus-utf8-vector,corvus-utf16-vector,jdk,tregex,v8] [--v8 &lt;industry.mjs&gt;] [--tregex &lt;GraalJS node&gt;]
  *        [--rounds 3] [--seconds 0.7] [--passes 7] [--spread 0.05] [--filter &lt;substring of the id&gt;]
  *        [--out &lt;results.json&gt;]
  * </pre>
@@ -45,10 +45,15 @@ import java.util.zip.GZIPInputStream;
  * ECMA-262: after an empty match the search goes on one code point later.
  *
  * <p>The engines: this library over UTF-8 ({@link Utf8Text}) and over UTF-16 ({@code String}), with the workload's
- * flags and {@code u}; {@code jdk}, {@code java.util.regex}, the platform's standard engine, which is given the
+ * flags and {@code u}, in each of its two modes: its own searches ({@code corvus-utf8}, {@code corvus-utf16}) and the
+ * Vector API's, which it takes where the JVM has the module {@code jdk.incubator.vector} ({@code corvus-utf8-vector},
+ * {@code corvus-utf16-vector}, run with {@code --add-modules jdk.incubator.vector}); {@code jdk}, {@code java.util.regex}, the platform's standard engine, which is given the
  * pattern as it is and the flags i (with Unicode case), m and s, and whose row is absent where the pattern does not
  * compile; {@code tregex}, TRegex, the ECMA-262 engine of GraalJS, run by GraalVM's Node ({@code --tregex}) over the
- * V8 harness; and V8 ({@code --v8}, the harness run by {@code node}), with {@code gu} added.
+ * V8 harness; and V8 ({@code --v8}, the harness run by {@code node}), with {@code gu} added. An engine written
+ * {@code name@classes} is {@code name} with the library's classes taken from the directory {@code classes} first, so
+ * that two builds can be timed side by side in the same rounds (an interleaved A/B). {@code --ids <file>} times only the
+ * workloads whose ids are the file's lines.
  *
  * <p>The texts are those of the reference run, in {@code CORVUS_REGEX_TEXTS} (or
  * {@code ~/.local/share/corvus-regex-benchmarks}) and fetched from dotnet/performance when missing. The run unzips each
@@ -59,7 +64,8 @@ public final class Industry {
 
     static final String SOURCE = "https://raw.githubusercontent.com/dotnet/performance/main/src/benchmarks/micro/"
             + "libraries/System.Text.RegularExpressions/TestData/";
-    static final List<String> ENGINES = List.of("corvus-utf8", "corvus-utf16", "jdk");
+    static final List<String> ENGINES =
+            List.of("corvus-utf8", "corvus-utf16", "corvus-utf8-vector", "corvus-utf16-vector", "jdk");
 
     /** What the counts are summed into, so that no count is taken away as dead code. */
     static volatile long sink;
@@ -413,9 +419,22 @@ public final class Industry {
             command.add(v8);
             command.addAll(List.of("--one", path, String.valueOf(index), seconds, passes));
         } else {
+            // An engine named name@classes runs with the library's classes from that directory first.
+            String classPath = System.getProperty("java.class.path");
+            int at = engine.indexOf('@');
+            if (at >= 0) {
+                classPath = engine.substring(at + 1) + java.io.File.pathSeparator + classPath;
+                engine = engine.substring(0, at);
+            }
             command.add(Paths.get(System.getProperty("java.home"), "bin", "java").toString());
+            // The library's second mode: the Vector API's searches, which the JVM takes with the module added.
+            if (engine.endsWith("-vector")) {
+                command.add("--add-modules");
+                command.add("jdk.incubator.vector");
+                engine = engine.substring(0, engine.length() - "-vector".length());
+            }
             command.add("-cp");
-            command.add(System.getProperty("java.class.path"));
+            command.add(classPath);
             command.add("Industry");
             command.addAll(List.of("--one", path, String.valueOf(index), engine, seconds, passes));
         }
@@ -507,10 +526,11 @@ public final class Industry {
         String passes = opt.getOrDefault("--passes", "7");
         double limit = Double.parseDouble(opt.getOrDefault("--spread", "0.05"));
         String filter = opt.get("--filter");
+        List<String> ids = opt.containsKey("--ids") ? Files.readAllLines(Paths.get(opt.get("--ids"))) : null;
         List<Workload> all = workloads(path);
         List<Integer> chosen = new ArrayList<>();
         for (int k = 0; k < all.size(); k++) {
-            if (filter == null || all.get(k).id.contains(filter)) {
+            if ((filter == null || all.get(k).id.contains(filter)) && (ids == null || ids.contains(all.get(k).id))) {
                 chosen.add(k);
             }
         }

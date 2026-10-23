@@ -93,26 +93,45 @@ final class UnitSearch {
 
     /**
      * A set of code units as ranges (inclusive pairs), for the units a match can start with and for the units that end
-     * a run of a loop: one unit by {@link String#indexOf(int, int)}, any other set a unit at a time.
+     * a run of a loop: one unit by {@link String#indexOf(int, int)}, one range by a compare, and any other set by a table
+     * of bits a unit at a time: a block of 256 bits for each high byte of a unit, the blocks the set has nothing in
+     * shared, so that a test is two loads and a shift (the ranges tested in turn took fifteen times as long over the
+     * Leipzig text).
      */
     static final class UnitSet {
+        private static final long[] NONE = new long[4];
+
         final int[] ranges;
         /** The one unit of a set of one, or -1. */
         final int one;
+        /** The blocks of bits by high byte, for a set of more than one range; {@code null} otherwise. */
+        private final long[][] blocks;
 
         UnitSet(int[] ranges) {
             this.ranges = ranges;
             this.one = ranges.length == 2 && ranges[0] == ranges[1] ? ranges[0] : -1;
+            if (ranges.length > 2) {
+                long[][] b = new long[256][];
+                java.util.Arrays.fill(b, NONE);
+                for (int k = 0; k < ranges.length; k += 2) {
+                    for (int u = ranges[k]; u <= Math.min(ranges[k + 1], 0xFFFF); u++) {
+                        if (b[u >>> 8] == NONE) {
+                            b[u >>> 8] = new long[4];
+                        }
+                        b[u >>> 8][(u >>> 6) & 3] |= 1L << u;
+                    }
+                }
+                blocks = b;
+            } else {
+                blocks = null;
+            }
         }
 
         boolean contains(int u) {
-            int[] r = ranges;
-            for (int k = 0; k < r.length; k += 2) {
-                if (u - r[k] >= 0 && u <= r[k + 1]) {
-                    return true;
-                }
+            if (blocks != null) {
+                return (blocks[u >>> 8][(u >>> 6) & 3] >>> u & 1) != 0;
             }
-            return false;
+            return u - ranges[0] >= 0 && u <= ranges[1];
         }
 
         /** The first unit at or after {@code from} in the set; -1 for none. */
@@ -121,10 +140,10 @@ final class UnitSearch {
                 return s.indexOf(one, from);
             }
             int n = s.length();
-            int[] r = ranges;
-            if (r.length == 2) {
-                int lo = r[0];
-                int width = r[1] - lo;
+            long[][] b = blocks;
+            if (b == null) {
+                int lo = ranges[0];
+                int width = ranges[1] - lo;
                 for (int at = from; at < n; at++) {
                     int d = s.charAt(at) - lo;
                     if (d >= 0 && d <= width) {
@@ -134,7 +153,8 @@ final class UnitSearch {
                 return -1;
             }
             for (int at = from; at < n; at++) {
-                if (contains(s.charAt(at))) {
+                char u = s.charAt(at);
+                if ((b[u >>> 8][(u >>> 6) & 3] >>> u & 1) != 0) {
                     return at;
                 }
             }

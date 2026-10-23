@@ -5,7 +5,7 @@
 #
 #   tools/benchmarks/run.sh <workloads.json> <texts directory> <out.json> [test data directory]
 #
-# It needs a JDK (17 or later) and Python 3, Node 24 on PATH for the V8 rows, and GraalVM's Node (TREGEX_NODE, or
+# It needs JDK 25 (to build; the library runs on 17 and later) and Python 3, Node 24 on PATH for the V8 rows, and GraalVM's Node (TREGEX_NODE, or
 # graalnode on PATH) for the TRegex rows.
 # - workloads.json: the Industry workloads ({name, pattern, flags, file, id}), as tools/benchmarks/v8/workloads.py
 #   writes them from the .NET reference engine's Industry.cs (tools/benchmarks/workloads.json is a copy).
@@ -45,11 +45,14 @@ if [ "${SKIP_BUILD:-0}" != 1 ]; then tools/benchmarks/build.sh; fi
 cp="$classes/lib:$classes/tools"
 version="$(sed -n 's|^  <version>\(.*\)</version>|\1|p' pom.xml | head -n 1)"
 java -Xss4m -cp "$cp" Dataset "$data" "$work/wrong-corvus.tsv" > "$work/compliance-corvus.txt" 2>&1 || true
+# The library's second mode, the Vector API's searches, answers the data on its own.
+java -Xss4m --add-modules jdk.incubator.vector -cp "$cp" Dataset "$data" "$work/wrong-corvus-vector.tsv" \
+  > "$work/compliance-corvus-vector.txt" 2>&1 || true
 v8=(--v8 tools/benchmarks/v8/industry.mjs)
 compliance_v8=(--compliance-v8 "$work/compliance-v8.txt")
 if [ "${V8:-1}" = 0 ]; then
   compliance_v8=()
-  engines=(--engines corvus-utf8,corvus-utf16,jdk,tregex)
+  engines=(--engines corvus-utf8,corvus-utf16,corvus-utf8-vector,corvus-utf16-vector,jdk,tregex)
 else
   node tools/benchmarks/v8/dataset.mjs "$data" > "$work/compliance-v8.txt" 2>&1 || true
   engines=()
@@ -59,7 +62,7 @@ if [ "${TREGEX_COMPLIANCE:-0}" = 1 ]; then
 else
   cp tools/benchmarks/compliance-tregex.txt "$work/compliance-tregex.txt"
 fi
-tail -n 1 "$work/compliance-corvus.txt" $([ -f "$work/compliance-v8.txt" ] && echo "$work/compliance-v8.txt") "$work/compliance-tregex.txt"
+tail -n 1 "$work/compliance-corvus.txt" "$work/compliance-corvus-vector.txt" $([ -f "$work/compliance-v8.txt" ] && echo "$work/compliance-v8.txt") "$work/compliance-tregex.txt"
 if [ "${SETTLE:-0}" -gt 0 ]; then
   echo "settling for $SETTLE s"
   sleep "$SETTLE"
@@ -70,6 +73,7 @@ timed java -Dcorvus.version="$version" -cp "$cp" Industry "$workloads" "${v8[@]}
   2> "$work/run.log"
 grep -E '^(SPREAD|COUNT) ' "$work/run.log" || true
 python3 tools/benchmarks/industry-results.py --workloads "$workloads" --run "$work/run.json" --out "$out_file" \
-  --compliance-corvus "$work/compliance-corvus.txt" --compliance-tregex "$work/compliance-tregex.txt" \
+  --compliance-corvus "$work/compliance-corvus.txt" --compliance-corvus-vector "$work/compliance-corvus-vector.txt" \
+  --compliance-tregex "$work/compliance-tregex.txt" \
   "${compliance_v8[@]}" --run-url "${RUN_URL:-}"
 if [ -n "${KEEP:-}" ]; then mkdir -p "$KEEP" && cp "$work"/*.json "$work"/*.txt "$work"/*.log "$KEEP"/; fi

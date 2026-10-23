@@ -36,7 +36,9 @@ import java.util.stream.Stream;
  * flags with v added (the {@code unicode_sets} answers). A text is matched as UTF-16 and as UTF-8; a text with a lone
  * surrogate has no UTF-8 form and is matched as UTF-16 alone. Records marked v8_deviation are left out. The pattern is
  * the record's own, lone surrogates and all. {@code captures.jsonl} is judged on exec, the global search, the sticky
- * flag, replace and split.
+ * flag, replace and split. {@code ill-formed-utf8.jsonl} holds bytes that are not UTF-8, each one answer over UTF-8
+ * under each grammar the pattern is valid in, whose right answer is a refusal: the {@link IllegalArgumentException} of
+ * the methods that take a {@code byte[]}.
  */
 public final class Dataset {
     private static final Duration LIMIT = Duration.ofSeconds(2);
@@ -240,7 +242,69 @@ public final class Dataset {
             }
             return;
         }
+        if (name.equals("ill-formed-utf8.jsonl")) {
+            if (utf8) {
+                judgeIllFormed(r, pattern, counts, wrong);
+            }
+            return;
+        }
         judgeTests(name, r, pattern, counts, wrong);
+    }
+
+    static void judgeIllFormed(Object r, String pattern, Counts counts, List<String> wrong) {
+        String name = "ill-formed-utf8.jsonl";
+        String flags = (String) get(r, "flags");
+        String shown = escape(pattern);
+        for (Object[] mode : modes(r)) {
+            String modeFlags = flags + mode[0];
+            boolean expectedValid = (Boolean) mode[2];
+            String head = name + "\t/" + shown + "/" + modeFlags;
+            Regex re;
+            try {
+                re = Regex.compile(pattern, modeFlags);
+            } catch (Throwable e) {
+                if (!(e instanceof RegexException)) {
+                    counts.errors.incrementAndGet();
+                }
+                if (expectedValid) {
+                    counts.refused.incrementAndGet();
+                    wrong.add("REFUSED\t" + head + "\t" + firstLine(String.valueOf(e.getMessage())));
+                }
+                continue;
+            }
+            if (!expectedValid) {
+                counts.accepted.incrementAndGet();
+                wrong.add("ACCEPTED-INVALID\t" + head);
+                continue;
+            }
+            List<Object> tests = array(get(r, "tests"));
+            if (tests == null) {
+                continue;
+            }
+            for (Object t : tests) {
+                String hex = (String) get(t, "bytes");
+                byte[] bytes = new byte[hex.length() / 2];
+                for (int k = 0; k < bytes.length; k++) {
+                    bytes[k] = (byte) Integer.parseInt(hex, 2 * k, 2 * k + 2, 16);
+                }
+                try {
+                    boolean got = re.isMatch(bytes, LIMIT);
+                    counts.wrong.incrementAndGet();
+                    wrong.add("WRONG\t" + head + "\t" + hex + "\tutf8\tread as UTF-8 (" + got + "), not refused");
+                } catch (MatchLimitException e) {
+                    counts.limited.incrementAndGet();
+                    wrong.add("LIMIT\t" + head + "\t" + hex + "\tutf8");
+                } catch (RegexException e) {
+                    counts.errors.incrementAndGet();
+                    wrong.add("ERROR\t" + head + "\t" + hex + "\tutf8\t" + e);
+                } catch (IllegalArgumentException e) {
+                    counts.right.incrementAndGet();
+                } catch (Throwable e) {
+                    counts.errors.incrementAndGet();
+                    wrong.add("ERROR\t" + head + "\t" + hex + "\tutf8\t" + e);
+                }
+            }
+        }
     }
 
     static String firstLine(String s) {

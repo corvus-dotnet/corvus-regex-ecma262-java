@@ -44,6 +44,15 @@ classes=target/harness
 if [ "${SKIP_BUILD:-0}" != 1 ]; then tools/benchmarks/build.sh; fi
 cp="$classes/lib:$classes/tools"
 version="$(sed -n 's|^  <version>\(.*\)</version>|\1|p' pom.xml | head -n 1)"
+# COUNT_GATE=1 (the harness-image job): every workload counted by this library's engines beside V8, one round of the
+# least timing, each count checked against V8's by count-gate.py; nothing else runs.
+if [ "${COUNT_GATE:-0}" = 1 ]; then
+  export CORVUS_REGEX_TEXTS="$texts" CORVUS_REGEX_PLAIN="$work/plain"
+  java -cp "$cp" Industry "$workloads" --engines corvus-utf8,corvus-utf16,corvus-utf8-vector,corvus-utf16-vector,v8 --v8 tools/benchmarks/v8/industry.mjs --rounds 1 --seconds 0.01 \
+    --passes 1 --out "$work/counts.json" 2> "$work/counts.log" || true
+  python3 tools/benchmarks/count-gate.py "$workloads" "$work/counts.json" corvus-utf8 corvus-utf16 corvus-utf8-vector corvus-utf16-vector
+  exit $?
+fi
 java -Xss4m -cp "$cp" Dataset "$data" "$work/wrong-corvus.tsv" > "$work/compliance-corvus.txt" 2>&1 || true
 # The library's second mode, the Vector API's searches, answers the data on its own.
 java -Xss4m --add-modules jdk.incubator.vector -cp "$cp" Dataset "$data" "$work/wrong-corvus-vector.tsv" \

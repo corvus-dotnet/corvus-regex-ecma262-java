@@ -27,10 +27,11 @@ Regular expressions with the grammar and the answers of ECMA-262, the `RegExp` o
   far, so adding it is how a program opts in; without it, nothing of the Vector API is loaded. Both modes give the
   same answers, and CI runs everything in each.
 
-**Compliance.** Over the [ECMA-262 test data](https://github.com/corvus-dotnet/ecma262-regex-test-data) (what V8
-says about 117,889 patterns and 5,884,566 texts, test262's and `exec`, the global search, `replace` and `split` among
-them), the library gives 26,950,829 right answers and none wrong, refuses no valid pattern, accepts no invalid one and
-reaches no limit, over UTF-8 and over UTF-16. CI runs the whole data on every change.
+**Compliance.** Over the [ECMA-262 test data](https://github.com/corvus-dotnet/ecma262-regex-test-data) (what V8 says
+about 117,889 patterns and 5,884,566 texts, test262's and `exec`, the global search, `replace` and `split` among them,
+and texts of bytes that are not UTF-8, which it refuses), the library gives 26,953,709 right answers and none wrong,
+refuses no valid pattern, accepts no invalid one and reaches no limit, over UTF-8 and over UTF-16. CI runs the whole
+data on every change.
 
 It is a port of the Rust crate [corvus-regex-ecma262](https://github.com/corvus-dotnet/corvus-regex-ecma262-rs) at
 v0.1.3, with the crate's search layer (`docs/port-checklist.md`), and it follows the design of the .NET engine

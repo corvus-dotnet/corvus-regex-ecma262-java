@@ -2,18 +2,26 @@
 // engine: each record under each grammar V8 found it valid in when the data was written (u, none, and v in the file
 // that has it), every text as a JavaScript string (UTF-16), records and tests marked v8_deviation left out.
 // captures.jsonl is judged on exec, the global search, the sticky flag, replace, replaceAll, split and split3, each
-// one answer, as the Rust runner judges an engine over UTF-16. With the Node the data was written with (24.11.0),
+// one answer, as the Rust runner judges an engine over UTF-16. With the Node the data was written with (24.22.0),
 // every answer is V8's own, so this is the check that the data and the V8 on the page agree; with another, a
 // difference is a place where its V8 differs.
+//
+// Each file is judged in a process of its own, as the data's verify.js checks it: V8 answers two hand-written
+// patterns with a word boundary in a case-insensitive modifier group, (?i:\Bs) and (?i:\bk\b), otherwise once a
+// process has compiled a great many patterns, and in one process for every file it gets them wrong.
 //
 //   node dataset.mjs <data directory>
 //
 // The last line has the counts in the shape of the Rust runner's: records, right, wrong, refused-valid,
 // accepted-invalid, limit, errors.
+import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const dir = process.argv[2];
+// node dataset.mjs <data directory> --file <name>: one file, its counts written as JSON (see the top).
+const only = process.argv[3] === "--file" ? process.argv[4] : null;
 const REPLACEMENT = "<$&|$1|$2|$10|$<a>|$$|$`|$'>";
 
 function captures(m) {
@@ -67,11 +75,9 @@ function answersOf(name, r, modes) {
   }
   return n;
 }
-let records = 0, skipped = 0, right = 0, wrong = 0, refused = 0, accepted = 0, limited = 0;
-const start = Date.now();
-for (const name of readdirSync(dir).filter(f => f.endsWith(".jsonl")).sort()) {
-  if (from && name < from[0]) continue;
-  let fr = 0, fw = 0, ff = 0, fa = 0, fl = 0;
+// One file's counts.
+function judgeFile(name) {
+  let records = 0, skipped = 0, fr = 0, fw = 0, ff = 0, fa = 0, fl = 0;
   let index = -1;
   for (const line of readFileSync(join(dir, name), "utf8").split("\n")) {
     if (!line) continue;
@@ -116,8 +122,25 @@ for (const name of readdirSync(dir).filter(f => f.endsWith(".jsonl")).sort()) {
       process.stderr.write(`P\t${name}\t${index}\t${d.join("\t")}\t1\t0\n`);
     }
   }
-  right += fr; wrong += fw; refused += ff; accepted += fa; limited += fl;
-  console.log(`${name.padEnd(24)} right ${String(fr).padStart(10)}  wrong ${String(fw).padStart(6)}  refused-valid ${String(ff).padStart(4)}  accepted-invalid ${String(fa).padStart(4)}${fl ? `  limit ${fl}` : ""}`);
+  return { records, skipped, right: fr, wrong: fw, refused: ff, accepted: fa, limited: fl };
 }
-console.log("");
-console.log(`records ${records} (skipped ${skipped} deviations)  right ${right}  wrong ${wrong}  refused-valid ${refused}  accepted-invalid ${accepted}  limit ${limited}  errors 0  in ${((Date.now() - start) / 1000).toFixed(1)}s  (${process.version}, ${typeof Graal !== "undefined" ? "GraalJS " + Graal.versionGraalVM : "V8 " + process.versions.v8})`);
+
+if (only) {
+  console.log(JSON.stringify(judgeFile(only)));
+} else {
+  let records = 0, skipped = 0, right = 0, wrong = 0, refused = 0, accepted = 0, limited = 0;
+  const start = Date.now();
+  for (const name of readdirSync(dir).filter(f => f.endsWith(".jsonl")).sort()) {
+    if (from && name < from[0]) continue;
+    // Progress goes to this process's stderr as it is written; the counts come back on stdout.
+    const child = spawnSync(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), dir, "--file", name],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 1 << 26 });
+    if (child.status !== 0) throw new Error(`${name}: the process that judged it exited with ${child.status}`);
+    const c = JSON.parse(child.stdout.trim().split("\n").pop());
+    records += c.records; skipped += c.skipped;
+    right += c.right; wrong += c.wrong; refused += c.refused; accepted += c.accepted; limited += c.limited;
+    console.log(`${name.padEnd(24)} right ${String(c.right).padStart(10)}  wrong ${String(c.wrong).padStart(6)}  refused-valid ${String(c.refused).padStart(4)}  accepted-invalid ${String(c.accepted).padStart(4)}${c.limited ? `  limit ${c.limited}` : ""}`);
+  }
+  console.log("");
+  console.log(`records ${records} (skipped ${skipped} deviations)  right ${right}  wrong ${wrong}  refused-valid ${refused}  accepted-invalid ${accepted}  limit ${limited}  errors 0  in ${((Date.now() - start) / 1000).toFixed(1)}s  (${process.version}, ${typeof Graal !== "undefined" ? "GraalJS " + Graal.versionGraalVM : "V8 " + process.versions.v8})`);
+}

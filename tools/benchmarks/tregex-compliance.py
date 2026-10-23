@@ -18,7 +18,7 @@ run.sh runs it with TREGEX_COMPLIANCE=1; otherwise it takes tools/benchmarks/com
 output, since a run takes about twenty minutes (GraalJS compiles each pattern, and each record at the limit waits
 thirty seconds), where V8's takes fifteen seconds.
 """
-import argparse, os, select, subprocess, sys, time
+import argparse, os, select, signal, subprocess, sys, time
 
 ap = argparse.ArgumentParser()
 ap.add_argument("node")
@@ -45,8 +45,10 @@ while done + 1 < len(order):
     env = dict(os.environ, DATASET_PROGRESS="1", DATASET_LIMITED="\n".join(f"{f}\t{k}" for f, k in limited))
     nxt = order[done + 1]
     env["DATASET_FROM"] = f"{nxt[0]}\t{nxt[1]}"
+    # In a process group of its own: dataset.mjs judges each file in a child process, so stopping the script alone
+    # would leave the child that is stuck in the match running, and every record at the limit would add one.
     child = subprocess.Popen([args.node, script, args.data], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             text=True, encoding="utf-8")
+                             text=True, encoding="utf-8", start_new_session=True)
     buf = ""
     last = time.time()
     finished = False
@@ -69,7 +71,7 @@ while done + 1 < len(order):
                 done = position[(name, int(index))]
                 last = time.time()
         elif time.time() - last > args.limit:
-            child.kill()
+            os.killpg(child.pid, signal.SIGKILL)
             child.wait()
             hung = order[done + 1]
             limited.append(hung)

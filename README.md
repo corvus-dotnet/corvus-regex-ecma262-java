@@ -55,11 +55,18 @@ the benchmark harness.
 ## Benchmarks
 
 The [central benchmark site](https://corvus-oss.org/corvus-regex-ecma262-benchmarks/) runs this repository's harness
-image, `ghcr.io/corvus-dotnet/corvus-regex-ecma262-java`, each night beside every other Corvus ECMA-262 engine: this
+image, `ghcr.io/corvus-dotnet/corvus-regex-ecma262-java`, each night beside the engines of every other source: this
 library over UTF-8 and UTF-16 in both modes, `java.util.regex`, TRegex (the regex engine of GraalJS, run by GraalVM's Node) and V8,
 over the Industry workloads of dotnet/performance, with each ECMA-262 engine's compliance over the test data. This
 repository publishes no figures of its own. `tools/benchmarks/run.sh <workloads.json> <texts> <out.json>` runs the
 same harness anywhere (see the script for what it needs).
+
+TRegex's compliance takes too long to work out every night, so it is worked out once (`TREGEX_COMPLIANCE=1`, which runs
+`tools/benchmarks/tregex-compliance.py`) and checked in as `tools/benchmarks/compliance-tregex.txt`. Its first line is
+the commit of the test data it was made at (`data <commit>`): the page judges the counts against what that commit
+asks, and CI fails when it is not the commit CI checks the data out at, so moving CI's pin means working it out again.
+A change to the harness alone, such as new counts, is released as a harness release (`gh release create
+harness-<version>.<n> --latest=false`), which publishes the harness image and no package.
 
 ## Building
 

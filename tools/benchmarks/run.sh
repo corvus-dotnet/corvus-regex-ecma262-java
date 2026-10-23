@@ -67,7 +67,10 @@ else
   engines=()
 fi
 if [ "${TREGEX_COMPLIANCE:-0}" = 1 ]; then
-  python3 tools/benchmarks/tregex-compliance.py "$(command -v "$tregex_node")" "$data" > "$work/compliance-tregex.txt" || true
+  # The commit of the data, when it is a checkout, heads the counts ("data <commit>"), as the checked-in file's does.
+  { commit=$(git -C "$data/.." rev-parse HEAD 2>/dev/null) && echo "data $commit"
+    python3 tools/benchmarks/tregex-compliance.py "$(command -v "$tregex_node")" "$data" || true
+  } > "$work/compliance-tregex.txt"
 else
   cp tools/benchmarks/compliance-tregex.txt "$work/compliance-tregex.txt"
 fi

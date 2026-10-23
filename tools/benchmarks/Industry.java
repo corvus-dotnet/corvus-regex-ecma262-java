@@ -41,8 +41,9 @@ import java.util.zip.GZIPInputStream;
  * seconds, then times {@code passes} passes of as many counts as fit the rest and reports their median. A workload's
  * figure for an engine is the median of its rounds, with the fastest and the slowest round as its spread. Where the
  * spread, (slowest - fastest) / median, is over {@code --spread}, the figure is listed in the run's facts and on
- * stderr. A child that does not finish in two minutes is stopped and recorded as such. A count is the global search of
- * ECMA-262: after an empty match the search goes on one code point later.
+ * stderr. A figure that does not finish in 30 s is stopped and recorded as giving no result within 30 s, and is not run
+ * in the workload's later rounds. A count is the global search of ECMA-262: after an empty match the search goes on one
+ * code point later.
  *
  * <p>The engines: this library over UTF-8 ({@link Utf8Text}) and over UTF-16 ({@code String}), with the workload's
  * flags and {@code u}, in each of its two modes: its own searches ({@code corvus-utf8}, {@code corvus-utf16}) and the
@@ -411,6 +412,9 @@ public final class Industry {
         return b.append('}').toString();
     }
 
+    /** The line of a figure stopped at the limit, which the page shows as giving no result within 30 s. */
+    static final String STOPPED = "{\"error\":\"did not produce a result within 30 s\",\"limit\":30}";
+
     /** One figure: {@code engine} over workload {@code index} in a child process: its line of JSON, or one with the error. */
     static String figure(String v8, String tregex, String path, int index, String engine, String seconds, String passes) {
         List<String> command = new ArrayList<>();
@@ -453,12 +457,12 @@ public final class Industry {
         });
         String out;
         try {
-            out = line.get(120, TimeUnit.SECONDS);
+            out = line.get(30, TimeUnit.SECONDS);
             if (out == null) {
                 out = "{\"error\":\"the process ended without figures\"}";
             }
         } catch (TimeoutException e) {
-            out = "{\"error\":\"did not finish in two minutes\"}";
+            out = STOPPED;
         } catch (Exception e) {
             out = "{\"error\":" + quote(e.toString()) + "}";
         }
@@ -562,6 +566,10 @@ public final class Industry {
             for (int round = 0; round < rounds; round++) {
                 for (int turn = 0; turn < ne; turn++) {
                     int e = (turn + round) % ne;
+                    // A figure stopped at the limit in an earlier round is not run again.
+                    if (STOPPED.equals(lines[e][k])) {
+                        continue;
+                    }
                     String line = figure(v8, tregex, path, k, engines.get(e), seconds, passes);
                     Object parsed = null;
                     try {

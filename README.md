@@ -28,8 +28,8 @@ Regular expressions with the grammar and the answers of ECMA-262, the `RegExp` o
   same answers, and CI runs everything in each.
 
 **Compliance.** Over the [ECMA-262 test data](https://github.com/corvus-dotnet/ecma262-regex-test-data) (what V8 says
-about 117,889 patterns and 5,884,566 texts, test262's and `exec`, the global search, `replace` and `split` among them,
-and texts of bytes that are not UTF-8, which it refuses), the library gives 26,953,709 right answers and none wrong,
+about 123,087 patterns and 6,056,699 texts, test262's and `exec`, the global search, `replace` and `split` among them,
+and texts of bytes that are not UTF-8, which it refuses), the library gives 29,289,554 right answers and none wrong,
 refuses no valid pattern, accepts no invalid one and reaches no limit, over UTF-8 and over UTF-16. CI runs the whole
 data on every change.
 

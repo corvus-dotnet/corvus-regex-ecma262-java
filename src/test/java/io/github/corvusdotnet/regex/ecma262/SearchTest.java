@@ -134,6 +134,39 @@ class SearchTest {
         }
     }
 
+    /**
+     * The faults the start-searches family of the test data and its fuzzer (fuzz.js there) found, each pattern over the
+     * text that showed it: the search finds what every position finds, over UTF-8 and over UTF-16.
+     */
+    @Test
+    void theSearchesFindTheStartsTheFuzzerFound() {
+        String[][] cases = {
+            {"\\b\\w+n\\b", "", "a nation"}, {"\\b\\w+n\\b", "", "an nation nn nan noon"},
+            {"\\w+\\s+Holmes", "", "Holmes Holmes"}, {"\\b\\d*\\s*a\\b", "", " a"},
+            {"\\b\\d*\\W*x\\b", "s", " \u00e9\u00e9x"}, {"\\b\\d*\\W*x", "", "a1 x"},
+            {"\\b\\d*\\W+\\w+ab", "", "ab0 aab"},
+            {"\\b\\w*[\\u{1F600}-\\u{1F64F}]*S\\B", "u", "\ud83d\ude00S_n\ud83d\ude00S"},
+            {"\\W+[a-z]*\\W*a", "m", " a"}, {"[a-z\\u00e9\\u00e8]+\\d*[a-z]+on", "i", " ONaON"},
+            {"\\w+?[^\\w\\s]*\\d+?n", "im", "000n"}, {"\\w*\\W+-$", "", " a\u00a0-a--"},
+            {"\\w*[^\\w\\s]+k$", "", "---_-ka.k"}, {"\\b[0-9a-f]*\\u00e9t", "", "\n\u00e9t0a\u00e9t"},
+            {".{1,3}(?:on|\\.).", "", "\ud83d\ude00\ud83d\ude00\ud83d\ude00ona on"},
+            {"\\b[^\\n]{1,3}(?:k|\\.)\\b", "im", "k \ud83d\ude00nk"},
+            {"[^\\n]{1,3}(?:\\u00e9|a)", "", "\u4e2d\u4e2d\u4e2da"}, {"\\B[^\\w\\s]{1,3}(?:a|n)", "", "a\ud83d\ude00a"},
+        };
+        for (String[] c : cases) {
+            for (String mode : new String[] {"", "u"}) {
+                Regex[] both = searchedAndPlain(c[0], c[1] + mode);
+                if (both == null) {
+                    continue;
+                }
+                String where = "/" + c[0] + "/" + c[1] + mode + " on " + c[2];
+                assertEquals(spans(both[1].findAll(c[2])), spans(both[0].findAll(c[2])), where + " over UTF-16");
+                Utf8Text u8 = Utf8Text.of(c[2]);
+                assertEquals(spans(both[1].findAll(u8)), spans(both[0].findAll(u8)), where + " over UTF-8");
+            }
+        }
+    }
+
     /** A literal with a byte rare in text is found by the search for that byte, wherever in the literal it is. */
     @Test
     void aLiteralWithARareByteIsFoundAsAnyOther() {

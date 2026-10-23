@@ -554,7 +554,16 @@ final class Matcher$T$ {
         int len = LEN(input);
         boolean units = p.units;
         int next = start;
-        int tried = -1;
+        // The floor below which no start is tried again (see the Rust crate's search_after_loops): from the earliest
+        // start of an occurrence's runs the loops reach every place a later start of the runs could, so those fail
+        // with it; the occurrence itself is not in the runs and may start a match, so it is tried next where every
+        // loop may be empty, and is the floor otherwise. An occurrence ruled out does not move the floor, as a start
+        // before it can reach a later one through it.
+        int low = start;
+        boolean allEmpty = true;
+        for (int m : mins) {
+            allEmpty &= m == 0;
+        }
         occurrences:
         while (true) {
             long found = s.literals.find(input, next);
@@ -567,7 +576,7 @@ final class Matcher$T$ {
             // the rest is checked.
             int last = sets.length - 1;
             if (mins[last] == 1) {
-                if (q <= start) {
+                if (q <= low) {
                     continue;
                 }
                 int c = AT(input, q - 1);
@@ -582,7 +591,7 @@ final class Matcher$T$ {
             int at = q;
             for (int k = sets.length - 1; k >= 0; k--) {
                 int runEnd = at;
-                while (at > start) {
+                while (at > low) {
                     int c = AT(input, at - 1);
                     int r;
                     int w;
@@ -594,7 +603,7 @@ final class Matcher$T$ {
                         r = rw >> 3;
                         w = rw & 7;
                     }
-                    if (!sets[k].contains(r) || at - w < start) {
+                    if (!sets[k].contains(r) || at - w < low) {
                         break;
                     }
                     at -= w;
@@ -602,9 +611,6 @@ final class Matcher$T$ {
                 if (mins[k] == 1 && at == runEnd) {
                     continue occurrences;
                 }
-            }
-            if (at <= tried) {
-                continue;
             }
             if (len - at < need) {
                 return false;
@@ -615,7 +621,24 @@ final class Matcher$T$ {
             if (st.stop != State.STOP_NONE) {
                 return false;
             }
-            tried = at;
+            if (at < q) {
+                // The occurrence itself (\b[0-9a-f]*\u00e9t over "0a\u00e9t", where the walk back gives 0).
+                low = q;
+                if (allEmpty) {
+                    if (len - q < need) {
+                        return false;
+                    }
+                    if (tryAt(p, st, input, q)) {
+                        return true;
+                    }
+                    if (st.stop != State.STOP_NONE) {
+                        return false;
+                    }
+                    low = next;
+                }
+            } else {
+                low = next;
+            }
             if (sets.length == 1) {
                 // Every occurrence in the rest of the loop's run walks back to the start just tried.
                 next = Math.max(next, endOfRun(p, sets[0], input, q));

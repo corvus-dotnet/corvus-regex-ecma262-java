@@ -866,10 +866,18 @@ final class Search {
             k++;
         }
         if (!sets.isEmpty()) {
-            boolean wordSet = wordSet(sets.get(0));
+            // \b is allowed when every loop's set is of word characters (a later start of the runs can be in any loop's run,
+            // where \b holds after a word character before a member that is not one: \b\d*\s*a over " a"), and the sets
+            // must share no character, any two of them.
+            boolean wordSet = true;
+            for (CharSet each : sets) {
+                wordSet &= wordSet(each);
+            }
             boolean disjoint = true;
-            for (int i = 0; i + 1 < sets.size(); i++) {
-                disjoint &= sets.get(i).intersect(sets.get(i + 1)).isEmpty();
+            for (int i = 0; i < sets.size(); i++) {
+                for (int j = i + 1; j < sets.size(); j++) {
+                    disjoint &= sets.get(i).intersect(sets.get(j)).isEmpty();
+                }
             }
             boolean small = true;
             for (int i = 0; i < mins.size(); i++) {

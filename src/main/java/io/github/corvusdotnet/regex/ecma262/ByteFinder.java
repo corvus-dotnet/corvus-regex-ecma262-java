@@ -66,6 +66,58 @@ abstract class ByteFinder {
      */
     static final int ALONE = 200;
 
+    /**
+     * Each ASCII byte's share of English text in parts per ten thousand: the small letters by their frequency (the table
+     * of the .NET reference engine's needle, {@code Needle.cs}), the capitals as measured over the Industry texts (the
+     * greater of their shares of the Sherlock Holmes text and the Leipzig corpus: I 65, T 28, H 21, S 16), the space and
+     * the commonest punctuation, and ten for any other byte. It knows what {@link #RANK} does not, that a capital is
+     * rarer than {@code k} in English text ({@code Sherlock}'s {@code k}, which RANK ranks rarest, is found 3,595 times
+     * in the Sherlock Holmes text, its {@code S} 837), and that the capitals are not alike: {@code Twain}'s T, found
+     * alone, left the vector loop often enough over the Leipzig corpus to lose to the pair (1,421 us against 1,261).
+     */
+    private static final int[] SHARE = share();
+
+    private static int[] share() {
+        int[] r = new int[128];
+        java.util.Arrays.fill(r, 10);
+        String letters = "etaoinshrdlcumwfgypbvkjxqz";
+        int[] perMille = {102, 73, 66, 60, 56, 54, 50, 49, 48, 34, 32, 22, 22, 19, 19, 18, 16, 16, 15, 12, 8, 6, 2, 2, 1,
+            1};
+        for (int k = 0; k < letters.length(); k++) {
+            r[letters.charAt(k)] = perMille[k] * 10;
+        }
+        String capitals = "ITHASWMECBNOYRLDPGFJUVKXQZ";
+        int[] perTenThousand = {65, 28, 21, 18, 16, 13, 13, 12, 10, 10, 9, 9, 8, 8, 7, 6, 6, 5, 5, 4, 2, 2, 2, 1, 1, 1};
+        for (int k = 0; k < capitals.length(); k++) {
+            r[capitals.charAt(k)] = perTenThousand[k];
+        }
+        r[' '] = 1700;
+        r['\n'] = 200;
+        r['\r'] = 200;
+        r['.'] = 70;
+        r[','] = 80;
+        return r;
+    }
+
+    /**
+     * The most a byte's share of text may be, in parts per ten thousand, for it to be searched for alone with vectors:
+     * S, H and A, not T or I.
+     */
+    private static final int VECTOR_ALONE = 25;
+
+    /**
+     * The same for a literal of three bytes or fewer: T too. Such a literal is a word as common as its capital is
+     * (nearly every T of the Sherlock Holmes text begins {@code The}), so no second position turns starts away, and the
+     * pair's scan only costs more: {@code The} 19.2 us alone against 25.3 as a pair, where {@code Twain}, whose T is
+     * seldom followed by w, took 791 us as a pair against 1,266 alone.
+     */
+    private static final int VECTOR_ALONE_SHORT = 30;
+
+    /** The most share of text the byte a literal is searched for by alone may have, with vectors. */
+    private static int vectorAlone(byte[] literal) {
+        return literal.length <= 3 ? VECTOR_ALONE_SHORT : VECTOR_ALONE;
+    }
+
     /** The search for the literals over UTF-8, in the pattern's order. */
     static ByteFinder of(byte[][] literals, boolean fingerprint) {
         return of(literals, fingerprint, RANK);
@@ -91,13 +143,13 @@ abstract class ByteFinder {
                 return new One(l[0]);
             }
             // The rarest byte, searched for alone where it is rare enough; the pair search where every byte is common.
-            int best = 0;
-            for (int k = 1; k < l.length; k++) {
-                if (rank[l[k] & 0xFF] < rank[l[best] & 0xFF]) {
-                    best = k;
-                }
-            }
-            if (alone(rank, l[best] & 0xFF)) {
+            int best = Kernels.vector() ? rarestByShare(l, rank) : rarestByRank(l, rank);
+            // With SWAR one byte reads three times as fast as two, so any rare byte is searched for alone. With the
+            // Vector API a pair of positions costs little more than one, so a byte is only where it is as rare as a
+            // capital: Sherlock by its k left the vector loop 3,595 times for 97 matches.
+            int b = l[best] & 0xFF;
+            boolean alone = Kernels.vector() ? b < 0x80 && rank[b] <= ALONE && SHARE[b] <= vectorAlone(l) : alone(rank, b);
+            if (alone) {
                 return new Rare(l, best);
             }
             Pair pair = Pair.of(literals, rank);
@@ -115,6 +167,33 @@ abstract class ByteFinder {
             return pair;
         }
         return Table.of(literals, rank);
+    }
+
+    /** The position of a literal's rarest byte by {@link #RANK} (or the packed ranks). */
+    private static int rarestByRank(byte[] l, int[] rank) {
+        int best = 0;
+        for (int k = 1; k < l.length; k++) {
+            if (rank[l[k] & 0xFF] < rank[l[best] & 0xFF]) {
+                best = k;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * The position of a literal's rarest ASCII byte by {@link #SHARE}, of those whose rank is {@link #RANK}'s own (not
+     * a byte a UTF-16 literal's unit beyond ASCII packs to, which {@link #packedRanks} marks), or by the ranks where it
+     * has none.
+     */
+    private static int rarestByShare(byte[] l, int[] rank) {
+        int best = -1;
+        for (int k = 0; k < l.length; k++) {
+            int b = l[k] & 0xFF;
+            if (b < 0x80 && rank[b] == RANK[b] && (best < 0 || SHARE[b] < SHARE[l[best] & 0xFF])) {
+                best = k;
+            }
+        }
+        return best >= 0 ? best : rarestByRank(l, rank);
     }
 
     /**

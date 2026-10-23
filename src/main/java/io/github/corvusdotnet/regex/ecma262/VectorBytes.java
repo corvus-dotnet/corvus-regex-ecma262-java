@@ -86,6 +86,16 @@ final class VectorBytes implements ByteKernels {
     }
 
     /**
+     * {@link #bits} for positions of one test each, the commonest (a literal matched exactly, or a letter's two cases
+     * joined by a mask): two compares where the four tests of each position make eight.
+     */
+    private static long bits1(byte[] h, int at, int i, int j, byte mi, byte vi, byte mj, byte vj) {
+        VectorMask<Byte> a = ByteVector.fromArray(S, h, at + i).or(mi).eq(vi);
+        VectorMask<Byte> b = ByteVector.fromArray(S, h, at + j).or(mj).eq(vj);
+        return a.and(b).toLong();
+    }
+
+    /**
      * The candidates of the block at {@code at}, a bit each: the starts whose bytes at {@code i} and {@code j} pass their
      * positions' four tests (a byte {@code x} passes one where {@code (x | mask) == value}; a position of fewer repeats
      * its last). Every vector is made and used here and none leaves it: a vector the JIT does not keep in a register
@@ -119,8 +129,13 @@ final class VectorBytes implements ByteKernels {
         // finding a block and then taking its bits again took a fifth more time. Testing a mask for any and then taking
         // its bits, so that a block of none costs less (a Han literal, 1.17 times as long), made the mask an object
         // the JIT kept in memory, which allocated: each mask has one use.
+        boolean one = p.mi.length == 1 && p.mj.length == 1;
+        byte mi = ti[0];
+        byte vi = ti[1];
+        byte mj = tj[0];
+        byte vj = tj[1];
         for (; at <= blocks; at += L) {
-            long m = bits(h, at, i, j, ti, tj);
+            long m = one ? bits1(h, at, i, j, mi, vi, mj, vj) : bits(h, at, i, j, ti, tj);
             while (m != 0) {
                 int s = at + Long.numberOfTrailingZeros(m);
                 if (s <= last) {

@@ -484,7 +484,8 @@ public final class Dataset {
         while (found.hasNext()) {
             Match m = found.next();
             if (n >= all.size()) {
-                break;
+                // One match more than the data has: wrong, unless the data kept only the first twenty.
+                return all.size() == 20;
             }
             int[][] e = all.get(n);
             if (e == null) {
@@ -576,6 +577,7 @@ public final class Dataset {
                 int n = 0;
                 for (Captures caps : g.capturesAll(text)) {
                     if (n >= all.size()) {
+                        allOk &= all.size() == 20;
                         break;
                     }
                     if (!sameSlots(all.get(n), groupsOf(caps), identity)) {

@@ -63,9 +63,13 @@ same harness anywhere (see the script for what it needs).
 
 TRegex's compliance takes too long to work out every night, so it is worked out once (`TREGEX_COMPLIANCE=1`, which runs
 `tools/benchmarks/tregex-compliance.py`) and checked in as `tools/benchmarks/compliance-tregex.json`, its compliance
-file: the counts, the script and the calls it makes, and what it leaves out (UTF-8, and any record with no answer in
-30 seconds, since a JavaScript engine cannot be stopped in a match). It gives the commit of the test data it was made
-at (`dataCommit`): the page judges the counts against what that commit asks, and CI fails when it is not the commit CI checks the data out at, so moving CI's pin means working it out again.
+file: the counts, the script and the calls it makes, and what it leaves out (UTF-8). A JavaScript engine cannot be
+stopped in a match, so a watchdog thread in GraalVM's Node ends the process at an answer that passes 2 seconds; that
+answer is unanswered, and a new process goes on from the next. Once three answers of a record have reached the limit,
+its other answers are unanswered without being asked. The limit is the wall clock's, so the run is made with nothing
+else running on the machine. The file gives the commit of the test data it was made at
+(`dataCommit`): the page judges the counts against what that commit asks, and CI fails when it is not the commit CI
+checks the data out at, so moving CI's pin means working it out again.
 A change to the harness alone, such as new counts, is released as a harness release (`gh release create
 harness-<version>.<n> --latest=false`), which publishes the harness image and no package.
 

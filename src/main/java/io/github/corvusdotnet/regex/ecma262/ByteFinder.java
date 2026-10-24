@@ -175,6 +175,21 @@ abstract class ByteFinder {
             return Table.of(literals);
         }
         Firsts firsts = Firsts.of(literals, rank);
+        // With the Vector API, the first two bytes where the first bytes are too many to test exactly: a search of
+        // their range passes every capital between (the seven names' A to W, 8,230 starts of the Sherlock Holmes text,
+        // 188 us against 143). Where a few first bytes are tested exactly, the sixteen compares of the two bytes cost
+        // more than the starts they turn away (Sherlock|Holmes|Watson 38 us against 140, Tom|Sawyer|Huckleberry|Finn
+        // 2,238 against 3,624, the Russian names over UTF-8 537 against 1,968).
+        // Over UTF-8 only ASCII first bytes: a character beyond ASCII is two bytes or more, so its first two bytes are
+        // that character, as common as its script's letters are (the Russian names, among them a small letter, 537 us
+        // against 2,003; the Chinese 118 against 290). The packed search over UTF-16 takes any (the Chinese 330 against
+        // 162).
+        if (Kernels.vector() && (firsts == null || firsts.lo >= 0) && (rank != RANK || asciiPrefixes(literals))) {
+            Prefixes prefixes = Prefixes.of(literals);
+            if (prefixes != null) {
+                return prefixes;
+            }
+        }
         if (firsts != null) {
             return firsts;
         }
@@ -183,6 +198,16 @@ abstract class ByteFinder {
             return pair;
         }
         return Table.of(literals, rank);
+    }
+
+    /** Whether every literal's first two bytes are ASCII. */
+    private static boolean asciiPrefixes(byte[][] literals) {
+        for (byte[] l : literals) {
+            if (l.length < 2 || l[0] < 0 || l[1] < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** The position of a literal's rarest byte by {@link #RANK} (or the packed ranks). */
@@ -452,6 +477,85 @@ abstract class ByteFinder {
             n++;
         }
         return Arrays.copyOf(out, 2 * n);
+    }
+
+    /**
+     * Three literals or more, of two bytes or more, with at most eight first two bytes between them, found with the
+     * Vector API by those two bytes taken as one sixteen-bit unit, compared with each literal's at every start (the .NET
+     * reference engine's search of pairs of bytes): only the literals' own pairs pass, where a search of their first
+     * bytes passes any start with one of those. Over the Sherlock Holmes text the seven names' capitals are 8,230
+     * starts, their first two bytes 1,075 for 740 matches.
+     */
+    static final class Prefixes extends ByteFinder {
+        /** The most distinct first two bytes. */
+        static final int MOST = 8;
+
+        final byte[][] literals;
+        final int shortest;
+        /** The first two bytes of the literals as units (the first byte low), eight of them, the last repeated. */
+        final short[] values;
+
+        private Prefixes(byte[][] literals, int shortest, short[] values) {
+            this.literals = literals;
+            this.shortest = shortest;
+            this.values = values;
+        }
+
+        static Prefixes of(byte[][] literals) {
+            if (literals.length < 3) {
+                return null;
+            }
+            int shortest = Integer.MAX_VALUE;
+            short[] distinct = new short[MOST];
+            int count = 0;
+            for (byte[] l : literals) {
+                if (l.length < 2) {
+                    return null;
+                }
+                shortest = Math.min(shortest, l.length);
+                short v = (short) ((l[0] & 0xFF) | (l[1] & 0xFF) << 8);
+                boolean seen = false;
+                for (int k = 0; k < count; k++) {
+                    seen |= distinct[k] == v;
+                }
+                if (!seen) {
+                    if (count == MOST) {
+                        return null;
+                    }
+                    distinct[count++] = v;
+                }
+            }
+            for (int k = count; k < MOST; k++) {
+                distinct[k] = distinct[count - 1];
+            }
+            return new Prefixes(literals, shortest, distinct);
+        }
+
+        @Override
+        long find(byte[] h, int from, int end) {
+            return Kernels.VECTOR != null ? Kernels.VECTOR.prefixesFind(this, h, from, end) : findFrom(h, from, end);
+        }
+
+        /** Where the first literal in order that starts at {@code at} ends, or -1. */
+        int literalAt(byte[] h, int at, int end) {
+            for (byte[] l : literals) {
+                if (h[at] == l[0] && end - at >= l.length && Swar.startsWith(h, at, end, l)) {
+                    return at + l.length;
+                }
+            }
+            return -1;
+        }
+
+        /** The leftmost occurrence from {@code from}, a start at a time: the part of a text shorter than a vector. */
+        long findFrom(byte[] h, int from, int end) {
+            for (int at = from; at <= end - shortest; at++) {
+                int e = literalAt(h, at, end);
+                if (e >= 0) {
+                    return span(at, e);
+                }
+            }
+            return -1;
+        }
     }
 
     /**

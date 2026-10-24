@@ -116,6 +116,8 @@ class SearchPrimitivesTest {
         {"aa", "ab"}, {"xyz", "xéz"}, {"Sherlock"}, {"zqj"}, {"jj j"}, {"S", "H"}, {"Sherlock", "Street"},
         {"Tom", "river", "Tomas"}, {"awyer", "inn"}, {"a"},
         {"Sherlock", "Holmes", "Watson", "Irene", "Adler", "John", "Baker", "sherlock", "holmes", "watson", "irene"},
+        {"Sherlock", "Holmes", "Watson", "Irene", "Adler", "John", "Baker"},
+        {"ab", "ac", "ba", "bc", "ca", "cb", "aa", "bb", "abc"},
     };
 
     static final String[] ALPHABET = {"a", "b", "c", "e", "h", "r", "t", "H", "S", "T", "E", " ", "ш", "Ш",
@@ -138,6 +140,7 @@ class SearchPrimitivesTest {
     void theFindersFindTheLeftmostLiteral() {
         Xorshift seed = new Xorshift(0x51ed270b);
         int pairs = 0;
+        int prefixed = 0;
         for (String[] set : SETS) {
             byte[][] literals = utf8(set);
             List<ByteFinder> finders = new ArrayList<>();
@@ -148,6 +151,11 @@ class SearchPrimitivesTest {
             if (pair != null) {
                 finders.add(pair);
                 pairs++;
+            }
+            ByteFinder.Prefixes prefixes = ByteFinder.Prefixes.of(literals);
+            if (prefixes != null) {
+                finders.add(prefixes);
+                prefixed++;
             }
             for (int round = 0; round < 100; round++) {
                 byte[] h = text(seed, set, seed.below(300)).getBytes(StandardCharsets.UTF_8);
@@ -163,6 +171,11 @@ class SearchPrimitivesTest {
             }
         }
         assertTrue(pairs >= 8, pairs + " pair searches");
+        // Three literals or more, of two bytes or more, with at most eight first two bytes between them.
+        assertTrue(prefixed >= 4, prefixed + " searches of the first two bytes");
+        assertNull(ByteFinder.Prefixes.of(utf8("Sherlock", "Holmes")));
+        assertNull(ByteFinder.Prefixes.of(utf8("Sherlock", "Holmes", "W")));
+        assertNull(ByteFinder.Prefixes.of(utf8("aa", "ab", "ac", "ad", "ae", "af", "ag", "ah", "ai")));
         // A literal of one byte has no pair of positions; the cases of a word written out are every sequence.
         assertNull(ByteFinder.Pair.of(utf8("S", "H")));
         assertTrue(ByteFinder.Pair.of(utf8("the", "thE", "tHe", "tHE", "The", "ThE", "THe", "THE")).every);

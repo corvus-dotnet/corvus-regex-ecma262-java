@@ -16,4 +16,7 @@ interface ByteKernels {
 
     /** The pair search's {@link ByteFinder.Pair#find}. */
     long pairFind(ByteFinder.Pair p, byte[] h, int from, int end);
+
+    /** The search of the literals' first two bytes, {@link ByteFinder.Prefixes#find}. */
+    long prefixesFind(ByteFinder.Prefixes p, byte[] h, int from, int end);
 }

@@ -1,6 +1,7 @@
 package io.github.corvusdotnet.regex.ecma262;
 
 import jdk.incubator.vector.ByteVector;
+import jdk.incubator.vector.ShortVector;
 import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
@@ -161,6 +162,54 @@ final class VectorBytes implements ByteKernels {
                     }
                 }
                 m &= m - 1;
+            }
+        }
+        return p.findFrom(h, at, end);
+    }
+
+    @Override
+    public long prefixesFind(ByteFinder.Prefixes p, byte[] h, int from, int end) {
+        int last = end - p.shortest;
+        if (from > last) {
+            return -1;
+        }
+        short[] v = p.values;
+        short v0 = v[0];
+        short v1 = v[1];
+        short v2 = v[2];
+        short v3 = v[3];
+        short v4 = v[4];
+        short v5 = v[5];
+        short v6 = v[6];
+        short v7 = v[7];
+        // Each block's bytes taken as sixteen-bit units twice, from its start and from one byte on: the starts at even
+        // and at odd offsets, each of whose first two bytes are compared with every literal's at once.
+        int blocks = end - L - 1;
+        int at = from;
+        for (; at <= blocks; at += L) {
+            ShortVector e = ByteVector.fromArray(S, h, at).reinterpretAsShorts();
+            ShortVector o = ByteVector.fromArray(S, h, at + 1).reinterpretAsShorts();
+            long me = e.eq(v0).or(e.eq(v1)).or(e.eq(v2)).or(e.eq(v3)).or(e.eq(v4)).or(e.eq(v5)).or(e.eq(v6)).or(e.eq(v7))
+                    .toLong();
+            long mo = o.eq(v0).or(o.eq(v1)).or(o.eq(v2)).or(o.eq(v3)).or(o.eq(v4)).or(o.eq(v5)).or(o.eq(v6)).or(o.eq(v7))
+                    .toLong();
+            while ((me | mo) != 0) {
+                int se = me != 0 ? 2 * Long.numberOfTrailingZeros(me) : Integer.MAX_VALUE;
+                int so = mo != 0 ? 2 * Long.numberOfTrailingZeros(mo) + 1 : Integer.MAX_VALUE;
+                int s;
+                if (se < so) {
+                    s = at + se;
+                    me &= me - 1;
+                } else {
+                    s = at + so;
+                    mo &= mo - 1;
+                }
+                if (s <= last) {
+                    int e2 = p.literalAt(h, s, end);
+                    if (e2 >= 0) {
+                        return ByteFinder.span(s, e2);
+                    }
+                }
             }
         }
         return p.findFrom(h, at, end);

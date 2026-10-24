@@ -129,13 +129,29 @@ final class VectorBytes implements ByteKernels {
         // finding a block and then taking its bits again took a fifth more time. Testing a mask for any and then taking
         // its bits, so that a block of none costs less (a Han literal, 1.17 times as long), made the mask an object
         // the JIT kept in memory, which allocated: each mask has one use.
-        boolean one = p.mi.length == 1 && p.mj.length == 1;
-        byte mi = ti[0];
-        byte vi = ti[1];
-        byte mj = tj[0];
-        byte vj = tj[1];
+        if (p.mi.length == 1 && p.mj.length == 1) {
+            // A loop of its own for positions of one test each, so that the loop the JIT compiles holds no choice.
+            byte mi = ti[0];
+            byte vi = ti[1];
+            byte mj = tj[0];
+            byte vj = tj[1];
+            for (; at <= blocks; at += L) {
+                long m = bits1(h, at, i, j, mi, vi, mj, vj);
+                while (m != 0) {
+                    int s = at + Long.numberOfTrailingZeros(m);
+                    if (s <= last) {
+                        int e = p.literalAt(h, s, end);
+                        if (e >= 0) {
+                            return ByteFinder.span(s, e);
+                        }
+                    }
+                    m &= m - 1;
+                }
+            }
+            return p.findFrom(h, at, end);
+        }
         for (; at <= blocks; at += L) {
-            long m = one ? bits1(h, at, i, j, mi, vi, mj, vj) : bits(h, at, i, j, ti, tj);
+            long m = bits(h, at, i, j, ti, tj);
             while (m != 0) {
                 int s = at + Long.numberOfTrailingZeros(m);
                 if (s <= last) {

@@ -12,24 +12,32 @@ has goes into "limit", as the judging rule of the data counts an answer an engin
 on from the next record. The output is the runner's: a line for each file and the last line of counts, with each
 record that reached the limit named.
 
-    tregex-compliance.py <GraalVM's node> <data directory> [--limit seconds (30)]
+    tregex-compliance.py <GraalVM's node> <data directory> [--limit seconds (30)] [--compliance <file>]
 
-run.sh runs it with TREGEX_COMPLIANCE=1; otherwise it takes tools/benchmarks/compliance-tregex.txt, this script's
-output, since a run takes about twenty minutes (GraalJS compiles each pattern, and each record at the limit waits
+With --compliance, TRegex's compliance object is written to the file, as the benchmark page reads it
+(docs/implementing-a-source.md in corvus-regex-ecma262-benchmarks): the counts, this script and the calls dataset.mjs
+makes, and what it leaves out: UTF-8 (a JavaScript string is UTF-16) and any record with no answer within the limit,
+which is the 30 seconds every runner gives a record.
+
+run.sh runs it with TREGEX_COMPLIANCE=1; otherwise it takes tools/benchmarks/compliance-tregex.json, this script's
+compliance file, since a run takes about twenty minutes (GraalJS compiles each pattern, and each record at the limit waits
 thirty seconds), where V8's takes fifteen seconds.
 """
-import argparse, os, select, signal, subprocess, sys, time
+import argparse, json, os, select, signal, subprocess, sys, time
 
 ap = argparse.ArgumentParser()
 ap.add_argument("node")
 ap.add_argument("data")
 ap.add_argument("--limit", type=float, default=30.0)
+ap.add_argument("--compliance")
 args = ap.parse_args()
 script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "v8", "dataset.mjs")
 
-# Every record in the order the script judges them: (file, index).
+# Every record in the order the script judges them: (file, index), the exec calls of test262 last.
+EXEC = "exec/test262.jsonl"
 order = []
-for name in sorted(f for f in os.listdir(args.data) if f.endswith(".jsonl")):
+names = sorted(f for f in os.listdir(args.data) if f.endswith(".jsonl"))
+for name in names + ([EXEC] if os.path.isfile(os.path.join(args.data, EXEC)) else []):
     with open(os.path.join(args.data, name), encoding="utf-8") as f:
         n = sum(1 for line in f if line.strip())
     order.extend((name, k) for k in range(n))
@@ -87,7 +95,7 @@ while done + 1 < len(order):
             raise SystemExit(f"the script ended at {order[done + 1]} without judging it: {out[-500:]}")
 
 total = dict.fromkeys(FIELDS, 0)
-for name in sorted(per_file):
+for name in sorted(per_file, key=lambda n: (n == EXEC, n)):
     c = per_file[name]
     for key in FIELDS:
         total[key] += c[key]
@@ -95,6 +103,16 @@ for name in sorted(per_file):
           f"accepted-invalid {c['accepted']:>4}" + (f"  limit {c['limit']}" if c["limit"] else ""))
 for f, k in limited:
     print(f"limit: {f} record {k}")
+if args.compliance:
+    with open(args.compliance, "w", encoding="utf-8") as f:
+        json.dump({"right": total["right"], "wrong": total["wrong"], "refused": total["refused"],
+                   "acceptedInvalid": total["accepted"], "limited": total["limit"],
+                   "judge": {"runner": "https://github.com/corvus-dotnet/corvus-regex-ecma262-java/blob/main/tools/benchmarks/tregex-compliance.py",
+                             "calls": {"utf16": ["RegExp.prototype.test", "RegExp.prototype.exec", "String.prototype.matchAll",
+                                                 "String.prototype.replace", "String.prototype.split"]}},
+                   "excludes": [{"class": "encoding", "leaves": "utf8"},
+                                {"class": "record-limit", "seconds": round(args.limit)}]}, f)
+        f.write("\n")
 print("")
 print(f"records {total['records']} (skipped {total['skipped']} deviations)  right {total['right']}  wrong {total['wrong']}  "
       f"refused-valid {total['refused']}  accepted-invalid {total['accepted']}  limit {total['limit']}  errors 0  "

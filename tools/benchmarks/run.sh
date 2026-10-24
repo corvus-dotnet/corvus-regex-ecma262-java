@@ -21,7 +21,7 @@
 # measured run on a quiet machine); SKIP_BUILD=1 when the classes are built (the image); V8=0 for no V8 rows (the
 # central run, for every image but one), whose counts the workloads carry (v8Count); TREGEX_COMPLIANCE=1 to work out
 # TRegex's compliance again (tools/benchmarks/tregex-compliance.py, twenty minutes) rather than take
-# tools/benchmarks/compliance-tregex.txt; RUN_URL, the address of the run.
+# tools/benchmarks/compliance-tregex.json; RUN_URL, the address of the run.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/../.." && pwd)"
 abs() { mkdir -p "$(dirname "$1")"; echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; }
@@ -53,28 +53,35 @@ if [ "${COUNT_GATE:-0}" = 1 ]; then
   python3 tools/benchmarks/count-gate.py "$workloads" "$work/counts.json" corvus-utf8 corvus-utf16 corvus-utf8-vector corvus-utf16-vector
   exit $?
 fi
-java -Xss4m -cp "$cp" Dataset "$data" "$work/wrong-corvus.tsv" > "$work/compliance-corvus.txt" 2>&1 || true
+# Each runner writes its engine's compliance file (--compliance): the counts, the runner and the calls it makes, and
+# what it leaves out, which the results script gives the page as it is.
+java -Xss4m -cp "$cp" Dataset "$data" "$work/wrong-corvus.tsv" --compliance "$work/compliance-corvus.json" \
+  > "$work/dataset-corvus.txt" 2>&1 || true
 # The library's second mode, the Vector API's searches, answers the data on its own.
 java -Xss4m --add-modules jdk.incubator.vector -cp "$cp" Dataset "$data" "$work/wrong-corvus-vector.tsv" \
-  > "$work/compliance-corvus-vector.txt" 2>&1 || true
+  --compliance "$work/compliance-corvus-vector.json" > "$work/dataset-corvus-vector.txt" 2>&1 || true
 v8=(--v8 tools/benchmarks/v8/industry.mjs)
-compliance_v8=(--compliance-v8 "$work/compliance-v8.txt")
+compliance_v8=(--compliance-v8 "$work/compliance-v8.json")
 if [ "${V8:-1}" = 0 ]; then
   compliance_v8=()
   engines=(--engines corvus-utf8,corvus-utf16,corvus-utf8-vector,corvus-utf16-vector,jdk,tregex)
 else
-  node tools/benchmarks/v8/dataset.mjs "$data" > "$work/compliance-v8.txt" 2>&1 || true
+  node tools/benchmarks/v8/dataset.mjs "$data" --compliance "$work/compliance-v8.json" > "$work/dataset-v8.txt" 2>&1 || true
   engines=()
 fi
 if [ "${TREGEX_COMPLIANCE:-0}" = 1 ]; then
-  # The commit of the data, when it is a checkout, heads the counts ("data <commit>"), as the checked-in file's does.
-  { commit=$(git -C "$data/.." rev-parse HEAD 2>/dev/null) && echo "data $commit"
-    python3 tools/benchmarks/tregex-compliance.py "$(command -v "$tregex_node")" "$data" || true
-  } > "$work/compliance-tregex.txt"
+  python3 tools/benchmarks/tregex-compliance.py "$(command -v "$tregex_node")" "$data" \
+    --compliance "$work/compliance-tregex.json" > "$work/dataset-tregex.txt" || true
+  # The commit of the data, when it is a checkout, goes in the file as dataCommit, as the checked-in file's does.
+  if commit=$(git -C "$data/.." rev-parse HEAD 2>/dev/null) && [ -f "$work/compliance-tregex.json" ]; then
+    python3 -c 'import json, sys; c = json.load(open(sys.argv[1])); c["dataCommit"] = sys.argv[2]; json.dump(c, open(sys.argv[1], "w"))' \
+      "$work/compliance-tregex.json" "$commit"
+  fi
 else
-  cp tools/benchmarks/compliance-tregex.txt "$work/compliance-tregex.txt"
+  cp tools/benchmarks/compliance-tregex.json "$work/compliance-tregex.json"
 fi
-tail -n 1 "$work/compliance-corvus.txt" "$work/compliance-corvus-vector.txt" $([ -f "$work/compliance-v8.txt" ] && echo "$work/compliance-v8.txt") "$work/compliance-tregex.txt"
+tail -n 1 "$work/dataset-corvus.txt" "$work/dataset-corvus-vector.txt" $([ -f "$work/dataset-v8.txt" ] && echo "$work/dataset-v8.txt") \
+  $([ -f "$work/dataset-tregex.txt" ] && echo "$work/dataset-tregex.txt") || true
 if [ "${SETTLE:-0}" -gt 0 ]; then
   echo "settling for $SETTLE s"
   sleep "$SETTLE"
@@ -85,7 +92,7 @@ timed java -Dcorvus.version="$version" -cp "$cp" Industry "$workloads" "${v8[@]}
   2> "$work/run.log"
 grep -E '^(SPREAD|COUNT) ' "$work/run.log" || true
 python3 tools/benchmarks/industry-results.py --workloads "$workloads" --run "$work/run.json" --out "$out_file" \
-  --compliance-corvus "$work/compliance-corvus.txt" --compliance-corvus-vector "$work/compliance-corvus-vector.txt" \
-  --compliance-tregex "$work/compliance-tregex.txt" \
+  --compliance-corvus "$work/compliance-corvus.json" --compliance-corvus-vector "$work/compliance-corvus-vector.json" \
+  --compliance-tregex "$work/compliance-tregex.json" \
   "${compliance_v8[@]}" --run-url "${RUN_URL:-}"
 if [ -n "${KEEP:-}" ]; then mkdir -p "$KEEP" && cp "$work"/*.json "$work"/*.txt "$work"/*.log "$KEEP"/; fi

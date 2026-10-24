@@ -113,6 +113,22 @@ abstract class ByteFinder {
      */
     private static final int VECTOR_ALONE_SHORT = 30;
 
+    /**
+     * A UTF-16 code unit's share of text in parts per ten thousand, for the choice of the unit {@link String#indexOf(int,
+     * int)} searches for: an ASCII unit as {@link #SHARE} has it; a capital of another alphabet (Latin, Greek, Cyrillic,
+     * Armenian) as rare as an ASCII capital and its small letters as common as the commonest ASCII ones, since a text in
+     * that script is mostly them; a CJK ideograph or kana as rare (one of thousands); anything else rare.
+     */
+    static int share16(char u) {
+        if (u < 0x80) {
+            return SHARE[u];
+        }
+        if (u < 0x250 || u >= 0x370 && u < 0x590) {
+            return Character.isUpperCase(u) ? 20 : Character.isLetter(u) ? 500 : 10;
+        }
+        return 10;
+    }
+
     /** The most share of text the byte a literal is searched for by alone may have, with vectors. */
     private static int vectorAlone(byte[] literal) {
         return literal.length <= 3 ? VECTOR_ALONE_SHORT : VECTOR_ALONE;

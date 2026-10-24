@@ -256,4 +256,30 @@ class SearchTest {
             Search.NO_SEARCH.get()[0] = false;
         }
     }
+
+    @Test
+    void theUtf16SearchForARareUnitFindsWhatEveryPositionFinds() {
+        // A literal found by String.indexOf for its rarest unit, wherever that is in it, with the starts that unit lets
+        // through and the literal does not; and up to four literals that share a rare first unit.
+        String[][] cases = {
+            {"Twain", "u", "Twi Twa Twain Twain Twai"},
+            {"aqj", "u", "q aq aqj qj aqjaqj"},
+            {"zqj", "", "zq zqj"},
+            {"\u0428\u0435\u0440\u043b\u043e\u043a", "u", "\u0428 \u0428\u0435\u0440\u043b\u043e\u043a \u0448\u0435\u0440\u043b\u043e\u043a"},
+            {"\u590f\u6d1b\u514b", "u", "\u590f\u6d1b \u590f\u6d1b\u514b\u590f\u6d1b\u514b"},
+            {"a\ud83d\ude00b", "u", "a\ud83d\ude00 a\ud83d\ude00b"},
+            {"Sherlock|Street", "u", "Sher Street Sherlock St"},
+            {"Sherlock|Street", "y", "Street"},
+        };
+        for (String[] c : cases) {
+            Regex[] two = searchedAndPlain(c[0], c[1] + "g");
+            String text = c[2];
+            assertEquals(spans(two[1].findAll(text)), spans(two[0].findAll(text)), c[0] + " /" + c[1] + " over " + text);
+            for (int from = 0; from <= text.length(); from++) {
+                Match a = two[0].find(text, from);
+                Match b = two[1].find(text, from);
+                assertEquals(b == null ? -1 : b.start(), a == null ? -1 : a.start(), c[0] + " from " + from);
+            }
+        }
+    }
 }

@@ -1,5 +1,8 @@
 package io.github.corvusdotnet.regex.ecma262;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * The searches over UTF-16 text, a {@link String}, that the Rust crate has as {@code simd16.rs}: one unit and one
  * literal by {@link String#indexOf}, which the JIT compiles to vector code, several literals by the packed search, and a
@@ -92,6 +95,22 @@ final class UnitSearch {
     }
 
     /**
+     * The chunk of a text copied into units last on a thread, for {@link UnitSet#find} with the Vector API: a {@code
+     * String} cannot change, so a chunk kept for it stays true for every search of it.
+     */
+    private static final class Units {
+        final char[] buf = new char[PACK];
+        String text;
+        int start;
+        int end;
+    }
+
+    private static final ThreadLocal<Units> UNITS = ThreadLocal.withInitial(Units::new);
+
+    /** The units a set's search looks at one at a time before it searches vectors of them. */
+    private static final int NEAR = 4;
+
+    /**
      * A set of code units as ranges (inclusive pairs), for the units a match can start with and for the units that end
      * a run of a loop: one unit by {@link String#indexOf(int, int)}, one range by a compare, and any other set by a table
      * of bits a unit at a time: a block of 256 bits for each high byte of a unit, the blocks the set has nothing in
@@ -127,6 +146,105 @@ final class UnitSearch {
             }
         }
 
+        /**
+         * Up to four ranges (each a least unit and a width) that hold every ASCII member of the set, the ranges merged
+         * across their narrowest gaps where there are more, for the Vector API's search; a range left over is one no
+         * unit is in. A unit beyond ASCII is a candidate where the set has such members ({@link #wide}).
+         */
+        private char[] lohi;
+        private boolean wide;
+
+        private void vectorRanges() {
+            List<int[]> ascii = new ArrayList<>();
+            boolean beyond = false;
+            for (int k = 0; k < ranges.length; k += 2) {
+                int lo = ranges[k];
+                int hi = Math.min(ranges[k + 1], 0xFFFF);
+                if (lo < 0x80) {
+                    ascii.add(new int[] {lo, Math.min(hi, 0x7F)});
+                }
+                beyond |= hi >= 0x80;
+            }
+            while (ascii.size() > 4) {
+                int best = 1;
+                for (int k = 2; k < ascii.size(); k++) {
+                    if (ascii.get(k)[0] - ascii.get(k - 1)[1] < ascii.get(best)[0] - ascii.get(best - 1)[1]) {
+                        best = k;
+                    }
+                }
+                ascii.get(best - 1)[1] = ascii.get(best)[1];
+                ascii.remove(best);
+            }
+            char[] r = new char[8];
+            for (int k = 0; k < 4; k++) {
+                if (k < ascii.size()) {
+                    r[2 * k] = (char) ascii.get(k)[0];
+                    r[2 * k + 1] = (char) (ascii.get(k)[1] - ascii.get(k)[0]);
+                } else {
+                    // Fewer ranges than four: the first repeated.
+                    r[2 * k] = r[0];
+                    r[2 * k + 1] = r[1];
+                }
+            }
+            if (ascii.isEmpty()) {
+                // No ASCII member: every range is 0xFFFF alone (a candidate the caller turns away), and beyond is the
+                // test.
+                for (int k = 0; k < 4; k++) {
+                    r[2 * k] = 0xFFFF;
+                    r[2 * k + 1] = 0;
+                }
+            }
+            this.lohi = r;
+            this.wide = beyond;
+        }
+
+        /** {@link #find} with the Vector API: the text copied into units a chunk at a time, sixteen tested at once. */
+        private int findByVectors(String s, int from) {
+            if (lohi == null) {
+                vectorRanges();
+            }
+            int n = s.length();
+            if (from >= n) {
+                return -1;
+            }
+            Units units = UNITS.get();
+            char[] buf = units.buf;
+            int at;
+            int end;
+            if (units.text == s && from >= units.start && from < units.end) {
+                at = units.start;
+                end = units.end;
+            } else {
+                at = from;
+                end = Math.min(at + PACK, n);
+                s.getChars(at, end, buf, 0);
+                units.text = s;
+                units.start = at;
+                units.end = end;
+            }
+            int k = from - at;
+            while (true) {
+                int i = Kernels.VECTOR.unitsIndexOf(buf, k, end - at, lohi, wide);
+                while (i >= 0) {
+                    char u = buf[i];
+                    if (contains(u)) {
+                        return at + i;
+                    }
+                    i = Kernels.VECTOR.unitsIndexOf(buf, i + 1, end - at, lohi, wide);
+                }
+                if (end == n) {
+                    return -1;
+                }
+                at = end;
+                end = Math.min(at + PACK, n);
+                s.getChars(at, end, buf, 0);
+                units.text = s;
+                units.start = at;
+                units.end = end;
+                k = 0;
+            }
+        }
+
         boolean contains(int u) {
             if (blocks != null) {
                 return (blocks[u >>> 8][(u >>> 6) & 3] >>> u & 1) != 0;
@@ -138,6 +256,19 @@ final class UnitSearch {
         int find(String s, int from) {
             if (one >= 0) {
                 return s.indexOf(one, from);
+            }
+            if (Kernels.VECTOR != null) {
+                // The first few units are looked at one at a time first: where the set is most of the text (a word's
+                // letters), the next start is a unit or two on, and a search of vectors would cost more than it passes
+                // over (\w+ took 1.34 times as long without this).
+                int n = s.length();
+                int near = Math.min(n, from + NEAR);
+                for (int at = from; at < near; at++) {
+                    if (contains(s.charAt(at))) {
+                        return at;
+                    }
+                }
+                return near < n ? findByVectors(s, near) : -1;
             }
             int n = s.length();
             long[][] b = blocks;

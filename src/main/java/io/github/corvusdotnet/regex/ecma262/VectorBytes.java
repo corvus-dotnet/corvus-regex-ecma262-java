@@ -17,6 +17,8 @@ import jdk.incubator.vector.VectorSpecies;
 final class VectorBytes implements ByteKernels {
     private static final VectorSpecies<Byte> S = ByteVector.SPECIES_PREFERRED;
     private static final int L = S.length();
+    private static final VectorSpecies<Short> U = ShortVector.SPECIES_PREFERRED;
+    private static final int LU = U.length();
 
     @Override
     public int indexOf(byte[] h, int from, int n, int b) {
@@ -213,5 +215,52 @@ final class VectorBytes implements ByteKernels {
             }
         }
         return p.findFrom(h, at, end);
+    }
+
+    @Override
+    public int unitsIndexOf(char[] c, int from, int n, char[] lohi, boolean wide) {
+        short lo0 = (short) lohi[0];
+        short w0 = (short) lohi[1];
+        short lo1 = (short) lohi[2];
+        short w1 = (short) lohi[3];
+        short lo2 = (short) lohi[4];
+        short w2 = (short) lohi[5];
+        short lo3 = (short) lohi[6];
+        short w3 = (short) lohi[7];
+        // A unit in a range is one whose distance from the range's start is at most its width, unsigned; JDK 17's API
+        // has signed comparisons alone, so both sides have their sign bit flipped, which orders them as unsigned.
+        short b0 = (short) (w0 ^ 0x8000);
+        short b1 = (short) (w1 ^ 0x8000);
+        short b2 = (short) (w2 ^ 0x8000);
+        short b3 = (short) (w3 ^ 0x8000);
+        short flip = (short) 0x8000;
+        // Beyond ASCII where the set has such members: a unit of 0x80 or more (as a signed unit, 0x80 up or below
+        // zero) is a candidate. Every candidate is compared with the set by the caller, so where the set has no such
+        // member the test only has to pass next to nothing: 0x7FFF alone.
+        short beyond = wide ? (short) 0x80 : Short.MAX_VALUE;
+        short below = wide ? (short) 0 : Short.MIN_VALUE;
+        int at = from;
+        for (; at <= n - LU; at += LU) {
+            ShortVector v = ShortVector.fromCharArray(U, c, at);
+            VectorMask<Short> m = v.sub(lo0).lanewise(VectorOperators.XOR, flip).compare(VectorOperators.LE, b0)
+                    .or(v.sub(lo1).lanewise(VectorOperators.XOR, flip).compare(VectorOperators.LE, b1))
+                    .or(v.sub(lo2).lanewise(VectorOperators.XOR, flip).compare(VectorOperators.LE, b2))
+                    .or(v.sub(lo3).lanewise(VectorOperators.XOR, flip).compare(VectorOperators.LE, b3))
+                    .or(v.compare(VectorOperators.GE, beyond))
+                    .or(v.compare(VectorOperators.LT, below));
+            long bits = m.toLong();
+            if (bits != 0) {
+                return at + Long.numberOfTrailingZeros(bits);
+            }
+        }
+        for (; at < n; at++) {
+            int u = c[at];
+            if (u - (lohi[0]) >= 0 && u - lohi[0] <= lohi[1] || u - lohi[2] >= 0 && u - lohi[2] <= lohi[3]
+                    || u - lohi[4] >= 0 && u - lohi[4] <= lohi[5] || u - lohi[6] >= 0 && u - lohi[6] <= lohi[7]
+                    || wide && u >= 0x80) {
+                return at;
+            }
+        }
+        return -1;
     }
 }

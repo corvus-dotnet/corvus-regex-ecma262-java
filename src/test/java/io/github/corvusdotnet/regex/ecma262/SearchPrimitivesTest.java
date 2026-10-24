@@ -249,4 +249,42 @@ class SearchPrimitivesTest {
             }
         }
     }
+
+    @Test
+    void aUnitSetFindsItsFirstUnitOverChunksAndBeyondAscii() {
+        // With the Vector API a set's search copies the text a chunk of 4,096 units at a time and tests sixteen at once
+        // against four ranges and beyond ASCII: sets of more ASCII ranges than four (merged), of none, of units on both
+        // sides of 0x8000 (signed in the test), over texts that cross chunks with their members far apart.
+        Xorshift seed = new Xorshift(0x2b9e5);
+        int[][] sets = {{'a', 'a', 'c', 'c', 'e', 'e', 'g', 'g', 'i', 'i', 'k', 'k'}, {0x7FFF, 0x8001}, {0xFF10, 0xFF19},
+            {0x0410, 0x042F}, {'0', '9', 0x0660, 0x0669}, {0xFFFF, 0xFFFF}, {'x', 'x', 0x10000, 0x10FFFF}};
+        String alphabet = "bdfhjlmnopqrstuvwyz .\u7FFE\u7FFF\u8000\u8001\u8002\uFF0F\uFF10\uFF19\uFF1A\u040F\u0410\u042F\u0430"
+                + "\u0669\uFFFE\uFFFF\uD83D\uDE00acegikx5";
+        for (int[] r : sets) {
+            UnitSearch.UnitSet set = new UnitSearch.UnitSet(r);
+            for (int round = 0; round < 40; round++) {
+                StringBuilder t = new StringBuilder();
+                int n = seed.below(9000);
+                for (int k = 0; k < n; k++) {
+                    // Mostly units outside every set, so that members are far apart.
+                    t.append(seed.below(50) == 0 ? alphabet.charAt(seed.below(alphabet.length())) : 'q');
+                }
+                String s = t.toString();
+                int want = -1;
+                for (int from = s.length(); from >= 0; from--) {
+                    if (from < s.length()) {
+                        char u = s.charAt(from);
+                        for (int i = 0; i < r.length; i += 2) {
+                            if (u >= r[i] && u <= r[i + 1]) {
+                                want = from;
+                            }
+                        }
+                    }
+                    if (from % 97 == 0 || from == s.length()) {
+                        assertEquals(want, set.find(s, from), "set " + java.util.Arrays.toString(r) + " from " + from);
+                    }
+                }
+            }
+        }
+    }
 }

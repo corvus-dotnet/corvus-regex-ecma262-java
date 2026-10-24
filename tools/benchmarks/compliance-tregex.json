@@ -1,0 +1,26 @@
+{
+ "right": 15616817,
+ "wrong": 31409,
+ "refused": 23,
+ "acceptedInvalid": 33,
+ "limited": 6532,
+ "judge": {
+  "runner": "https://github.com/corvus-dotnet/corvus-regex-ecma262-java/blob/main/tools/benchmarks/tregex-compliance.py",
+  "calls": {
+   "utf16": [
+    "RegExp.prototype.test",
+    "RegExp.prototype.exec",
+    "String.prototype.matchAll",
+    "String.prototype.replace",
+    "String.prototype.split"
+   ]
+  }
+ },
+ "excludes": [
+  {
+   "class": "encoding",
+   "leaves": "utf8"
+  }
+ ],
+ "dataCommit": "cff0860b7ebc5eb9c801eb9f8cec9d5398688ff2"
+}

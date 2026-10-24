@@ -28,8 +28,8 @@ Regular expressions with the grammar and the answers of ECMA-262, the `RegExp` o
   same answers, and CI runs everything in each.
 
 **Compliance.** Over the [ECMA-262 test data](https://github.com/corvus-dotnet/ecma262-regex-test-data) (what V8 says
-about 123,833 patterns and 6,124,271 texts, test262's and `exec`, the global search, `replace` and `split` among them,
-and texts of bytes that are not UTF-8, which it refuses), the library gives 29,689,063 right answers and none wrong,
+about its patterns and texts, test262's patterns and `exec` calls, the global search, `replace` and `split` among them,
+and texts of bytes that are not UTF-8, which it refuses), the library gives every answer right and none wrong,
 refuses no valid pattern, accepts no invalid one and reaches no limit, over UTF-8 and over UTF-16. CI runs the whole
 data on every change.
 
@@ -62,9 +62,14 @@ repository publishes no figures of its own. `tools/benchmarks/run.sh <workloads.
 same harness anywhere (see the script for what it needs).
 
 TRegex's compliance takes too long to work out every night, so it is worked out once (`TREGEX_COMPLIANCE=1`, which runs
-`tools/benchmarks/tregex-compliance.py`) and checked in as `tools/benchmarks/compliance-tregex.txt`. Its first line is
-the commit of the test data it was made at (`data <commit>`): the page judges the counts against what that commit
-asks, and CI fails when it is not the commit CI checks the data out at, so moving CI's pin means working it out again.
+`tools/benchmarks/tregex-compliance.py`) and checked in as `tools/benchmarks/compliance-tregex.json`, its compliance
+file: the counts, the script and the calls it makes, and what it leaves out (UTF-8). A JavaScript engine cannot be
+stopped in a match, so a watchdog thread in GraalVM's Node ends the process at an answer that passes 2 seconds; that
+answer is unanswered, and a new process goes on from the next. Once three answers of a record have reached the limit,
+its other answers are unanswered without being asked. The limit is the wall clock's, so the run is made with nothing
+else running on the machine. The file gives the commit of the test data it was made at
+(`dataCommit`): the page judges the counts against what that commit asks, and CI fails when it is not the commit CI
+checks the data out at, so moving CI's pin means working it out again.
 A change to the harness alone, such as new counts, is released as a harness release (`gh release create
 harness-<version>.<n> --latest=false`), which publishes the harness image and no package.
 

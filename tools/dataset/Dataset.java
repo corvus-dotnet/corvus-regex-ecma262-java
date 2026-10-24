@@ -29,6 +29,7 @@ import java.util.stream.Stream;
  *
  * <pre>
  *   java -cp target/classes:tools/dataset/out Dataset &lt;data directory&gt; &lt;wrong-cases output file&gt; [file filter] [utf16|utf8|both]
+ *        [--compliance &lt;file&gt;]
  * </pre>
  *
  * Each record is asked about under each grammar V8 found it valid in: the record's flags with u added (the
@@ -39,6 +40,15 @@ import java.util.stream.Stream;
  * flag, replace and split. {@code ill-formed-utf8.jsonl} holds bytes that are not UTF-8, each one answer over UTF-8
  * under each grammar the pattern is valid in, whose right answer is a refusal: the {@link IllegalArgumentException} of
  * the methods that take a {@code byte[]}.
+ *
+ * <p>{@code exec/test262.jsonl}, the exec calls of test262 (in a directory of its own), is judged last: each call one
+ * exec with the record's flags from its lastIndex, right when the positions of the match and of every group, the named
+ * groups and, with g or y, the lastIndex after are V8's; one answer over UTF-16 and, when the text holds no lone
+ * surrogate and lastIndex is not between the halves of a pair, one over UTF-8 with positions in bytes.
+ *
+ * <p>With {@code --compliance <file>}, the engine's compliance object is written to the file, as the benchmark page
+ * reads it (docs/implementing-a-source.md in corvus-regex-ecma262-benchmarks): the counts, this runner and the calls it
+ * makes in each encoding, and what it leaves out, which for this library is nothing.
  */
 public final class Dataset {
     private static final Duration LIMIT = Duration.ofSeconds(2);
@@ -66,6 +76,14 @@ public final class Dataset {
     static boolean utf8;
 
     public static void main(String[] args) throws Exception {
+        String compliance = null;
+        List<String> rest = new ArrayList<>(List.of(args));
+        int at = rest.indexOf("--compliance");
+        if (at >= 0) {
+            compliance = rest.get(at + 1);
+            rest.subList(at, at + 2).clear();
+            args = rest.toArray(new String[0]);
+        }
         Path directory = Paths.get(args[0]);
         Path wrongPath = Paths.get(args[1]);
         String filter = args.length > 2 ? args[2] : "*.jsonl";
@@ -77,6 +95,11 @@ public final class Dataset {
             files = s.filter(p -> p.getFileName().toString().endsWith(".jsonl"))
                     .filter(p -> glob(filter, p.getFileName().toString())).sorted().collect(Collectors.toList());
         }
+        // The exec calls of test262, in a directory of their own: with the default filter, or one that names them.
+        Path exec = directory.resolve(EXEC);
+        if ((filter.equals("*.jsonl") || filter.startsWith("exec")) && Files.isRegularFile(exec)) {
+            files.add(exec);
+        }
         Counts total = new Counts();
         List<String> wrongCases = Collections.synchronizedList(new ArrayList<>());
         AtomicLong records = new AtomicLong();
@@ -84,7 +107,7 @@ public final class Dataset {
         long clock = System.nanoTime();
         int threads = Integer.getInteger("threads", 4);
         for (Path file : files) {
-            String name = file.getFileName().toString();
+            String name = file.equals(exec) ? EXEC : file.getFileName().toString();
             Counts counts = new Counts();
             List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
             AtomicInteger next = new AtomicInteger();
@@ -126,6 +149,9 @@ public final class Dataset {
         List<String> cases = new ArrayList<>(wrongCases);
         Collections.sort(cases);
         Files.write(wrongPath, (String.join("\n", cases) + (cases.isEmpty() ? "" : "\n")).getBytes(StandardCharsets.UTF_8));
+        if (compliance != null) {
+            writeCompliance(Paths.get(compliance), total);
+        }
         System.out.println();
         System.out.printf("records %d (skipped %d deviations)  right %d  wrong %d  refused-valid %d  accepted-invalid %d  limit %d  errors %d  in %.1fs%n",
                 records.get(), skipped.get(), total.right.get(), total.wrong.get(), total.refused.get(),
@@ -234,8 +260,33 @@ public final class Dataset {
         return modes;
     }
 
+    /**
+     * Writes the engine's compliance as the benchmark page reads it: the counts, this runner and the calls it makes in
+     * each encoding it asked in, and what it leaves out.
+     */
+    static void writeCompliance(Path path, Counts t) throws IOException {
+        List<String> calls = new ArrayList<>();
+        if (utf16) {
+            calls.add("\"utf16\":[\"Regex.isMatch(String, Duration)\",\"Regex.captures(String, int, Duration)\",\"Regex.capturesAll(String)\","
+                    + "\"Regex.findAll(String)\",\"Regex.replace(String, String)\",\"Regex.split(String)\"]");
+        }
+        if (utf8) {
+            calls.add("\"utf8\":[\"Regex.isMatch(Utf8Text, Duration)\",\"Regex.captures(Utf8Text, int, Duration)\",\"Regex.capturesAll(Utf8Text)\","
+                    + "\"Regex.findAll(Utf8Text)\",\"Regex.replace(Utf8Text, String)\"]");
+        }
+        String json = String.format("{\"right\":%d,\"wrong\":%d,\"refused\":%d,\"acceptedInvalid\":%d,\"limited\":%d,"
+                + "\"judge\":{\"runner\":\"https://github.com/corvus-dotnet/corvus-regex-ecma262-java/blob/main/tools/dataset/Dataset.java\","
+                + "\"calls\":{%s}},\"excludes\":[]}%n", t.right.get(), t.wrong.get(), t.refused.get(), t.accepted.get(),
+                t.limited.get() + t.errors.get(), String.join(",", calls));
+        Files.write(path, json.getBytes(StandardCharsets.UTF_8));
+    }
+
     static void judgeRecord(String name, Object r, Counts counts, List<String> wrong) {
         String pattern = (String) get(r, "pattern");
+        if (name.equals(EXEC)) {
+            judgeExec(r, pattern, counts, wrong);
+            return;
+        }
         if (name.equals("captures.jsonl")) {
             if (utf16) {
                 judgeCaptures(r, pattern, counts, wrong);
@@ -396,6 +447,136 @@ public final class Dataset {
     }
 
     // -----------------------------------------------------------------------------------------------------------------
+    // exec/test262.jsonl
+
+    /** The file of the exec calls of test262, in a directory of its own. */
+    static final String EXEC = "exec/test262.jsonl";
+
+    /**
+     * A call's lastIndex. Past the end of the text exec gives null; test262 sets it as far as 2^53 - 1 and
+     * Number.MAX_VALUE, so anything past the end reads as the text's length plus one.
+     */
+    static int lastIndexOf(Object t, int length) {
+        double v = (Double) get(t, "lastIndex");
+        return v > length ? length + 1 : (int) v;
+    }
+
+    /** Whether a position is between the halves of a surrogate pair, where UTF-8 has no position. */
+    static boolean insidePair(String s, int at) {
+        return at > 0 && at < s.length() && Character.isLowSurrogate(s.charAt(at)) && Character.isHighSurrogate(s.charAt(at - 1));
+    }
+
+    /** A bound of the answer (a UTF-16 position) against the engine's, through map. */
+    static boolean sameBound(Object b, int got, Map1 map) {
+        return map.apply(((Double) b).intValue()) == got;
+    }
+
+    /** A span of the answer (null, or [start, end]) against group g of the engine's match (-1 for no group). */
+    static boolean sameSpan(Object e, Captures caps, int g, Map1 map) {
+        List<Object> b = array(e);
+        boolean took = g >= 0 && caps.matched(g);
+        if (b == null) {
+            return !took;
+        }
+        return took && sameBound(b.get(0), caps.start(g), map) && sameBound(b.get(1), caps.end(g), map);
+    }
+
+    /**
+     * Whether an engine's match (null for none) is the call's answer: both null, or the same groups, the same named
+     * groups (present exactly when the pattern has names) and, with g or y, a lastIndex after at the match's end.
+     */
+    static boolean sameExec(Object answer, Captures caps, List<String> names, boolean carries, Map1 map) {
+        if (answer == null || caps == null) {
+            return answer == null && caps == null;
+        }
+        List<Object> captures = array(get(answer, "captures"));
+        if (captures == null || captures.size() != caps.length()) {
+            return false;
+        }
+        for (int g = 0; g < captures.size(); g++) {
+            if (!sameSpan(captures.get(g), caps, g, map)) {
+                return false;
+            }
+        }
+        Object groups = get(answer, "groups");
+        if (groups == null) {
+            if (!names.isEmpty()) {
+                return false;
+            }
+        } else {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> m = (Map<String, Object>) groups;
+            if (m.size() != names.size()) {
+                return false;
+            }
+            for (Map.Entry<String, Object> e : m.entrySet()) {
+                if (!names.contains(e.getKey()) || !sameSpan(e.getValue(), caps, caps.named(e.getKey()), map)) {
+                    return false;
+                }
+            }
+        }
+        return !carries || sameBound(get(answer, "lastIndex"), caps.end(0), map);
+    }
+
+    /** Counts one answer of a call: true right, false wrong, null at the limit. */
+    static void countExec(Counts counts, List<String> wrong, String where, String encoding, Boolean outcome) {
+        if (outcome == null) {
+            counts.limited.incrementAndGet();
+            wrong.add("LIMIT\t" + EXEC + "\t" + where + "\t" + encoding);
+        } else if (outcome) {
+            counts.right.incrementAndGet();
+        } else {
+            counts.wrong.incrementAndGet();
+            wrong.add("WRONG\t" + EXEC + "\t" + where + "\t" + encoding);
+        }
+    }
+
+    /** Judges a record of exec/test262.jsonl: the pattern with its own flags (g, y and d among them), from each lastIndex. */
+    static void judgeExec(Object r, String pattern, Counts counts, List<String> wrong) {
+        String flags = (String) get(r, "flags");
+        String shown = escape(pattern);
+        Regex re;
+        try {
+            re = Regex.compile(pattern, flags);
+        } catch (RegexException e) {
+            counts.refused.incrementAndGet();
+            wrong.add("REFUSED\t" + EXEC + "\t/" + shown + "/" + flags + "\t" + firstLine(e.getMessage()));
+            return;
+        }
+        boolean carries = flags.indexOf('g') >= 0 || flags.indexOf('y') >= 0;
+        List<String> names = re.groupNames();
+        for (Object t : array(get(r, "tests"))) {
+            if (Boolean.TRUE.equals(get(t, "v8_deviation"))) {
+                continue;
+            }
+            String text = (String) get(t, "text");
+            int start = carries ? lastIndexOf(t, text.length()) : 0;
+            Object answer = get(t, "answer");
+            String where = "/" + shown + "/" + flags + "\t" + escape(text) + "\t" + get(t, "lastIndex");
+            if (utf16) {
+                Boolean outcome;
+                try {
+                    Captures caps = start > text.length() ? null : re.captures(text, start, LIMIT);
+                    outcome = sameExec(answer, caps, names, carries, k -> k);
+                } catch (MatchLimitException e) {
+                    outcome = null;
+                }
+                countExec(counts, wrong, where, "utf16", outcome);
+            }
+            if (utf8 && !hasLoneSurrogate(text) && !insidePair(text, start)) {
+                int[] byteAt = byteOffsets(text);
+                Boolean outcome;
+                try {
+                    Captures caps = start > text.length() ? null : re.captures(Utf8Text.of(text), byteAt[start], LIMIT);
+                    outcome = sameExec(answer, caps, names, carries, k -> byteAt[k]);
+                } catch (MatchLimitException e) {
+                    outcome = null;
+                }
+                countExec(counts, wrong, where, "utf8", outcome);
+            }
+        }
+    }
+
     // captures.jsonl
 
     /** The groups of an exec answer: null for no match, else the bounds of each group, null for one not taking part. */

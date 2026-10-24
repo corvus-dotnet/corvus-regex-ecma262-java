@@ -5,8 +5,8 @@ central benchmark site (https://corvus-oss.org/corvus-regex-ecma262-benchmarks/)
 each night and builds the one page of figures from its data file; this repository publishes no results of its own.
 
 Usage: industry-results.py [--workloads <workloads.json>] --run <harness results json> --out <data file>
-                           --compliance-corvus <runner output> --compliance-tregex <dataset.mjs output under GraalJS>
-                           [--compliance-v8 <tools/benchmarks/v8/dataset.mjs output>] [--run-url <url>]
+                           --compliance-corvus <compliance file> --compliance-tregex <tregex-compliance.py's compliance file>
+                           [--compliance-v8 <tools/benchmarks/v8/dataset.mjs's compliance file>] [--run-url <url>]
 
 The run is the output of the harness (tools/benchmarks/Industry.java, which run.sh runs), whose facts are the run's
 own record of itself: the processor, the cores it was given, the system, the load when it started, the runner when it
@@ -14,11 +14,13 @@ is a GitHub-hosted one, the Java runtime, the engines' versions, the commit, the
 the time it ended. V8 and TRegex are timed by tools/benchmarks/v8/industry.mjs, which names its engine. Nothing is
 typed in: what is not in a record is not said.
 
-Each engine that claims ECMA-262 carries its compliance over the ECMA-262 test data, from the last line of its
-data-set runner: this library's by tools/dataset/Dataset.java, V8's by tools/benchmarks/v8/dataset.mjs under Node, and
-TRegex's by the same script under GraalVM's Node. java.util.regex does not claim it, and carries "not ECMA-262".
+Each engine that claims ECMA-262 carries its compliance over the ECMA-262 test data, the compliance file its data-set
+runner writes (--compliance: the counts, the runner and the calls it makes, and what it leaves out): this library's by
+tools/dataset/Dataset.java, V8's by tools/benchmarks/v8/dataset.mjs under Node, and TRegex's by
+tools/benchmarks/tregex-compliance.py, which runs the same script under GraalVM's Node.
+java.util.regex does not claim it, and carries "not ECMA-262".
 """
-import argparse, json, os, re
+import argparse, json, os, re, sys
 
 
 def failure(r):
@@ -59,36 +61,36 @@ workloads = json.load(open(args.workloads or os.path.join(root, "tools", "benchm
 ids = [w["id"] for w in workloads]
 
 
-def compliance(path, note=None):
-    """The counts of a data-set runner's last line of counts. Every answer the engine never gave (a limit, a crash, a
-    hang or a worker that gave up) is in `limited`, as the judging rule of the test data counts it: the runner's
-    limit and errors."""
-    text = open(path, encoding="utf-8").read().splitlines()
-    lines = [l for l in text if l.startswith("records ")]
-    if not lines:
-        raise SystemExit(f"{path} has no line of counts")
-    c = {k: int(v) for k, v in re.findall(r"(right|wrong|refused-valid|accepted-invalid|limit|errors) (\d+)", lines[-1])}
-    out = {"right": c["right"], "wrong": c["wrong"], "refused": c["refused-valid"], "acceptedInvalid": c["accepted-invalid"],
-           "limited": c.get("limit", 0) + c.get("errors", 0)}
-    # Counts checked in beside the harness name the commit of the test data they were made at on their first line
-    # ("data <commit>"): the page judges them against what that commit asks.
-    if text and text[0].startswith("data ") and len(text[0].split()) == 2:
-        out["dataCommit"] = text[0].split()[1]
-    if note:
-        out["note"] = note
-    return out
+def compliance(path):
+    """The compliance object a data-set runner wrote (its --compliance file), which the page reads as it is: the counts
+    (every answer the engine never gave, a limit, a crash, a hang or a worker that gave up, in `limited`, as the judging
+    rule of the test data counts it), `judge` and `excludes`, and for counts checked in beside the harness the commit
+    of the test data they were made at (`dataCommit`), which the page judges them against. None, with a warning on
+    stderr, when the file cannot be read or lacks one of them: the engine is then written without a compliance, and
+    the run keeps its figures."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            c = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"warning: {path} could not be read ({e}), so its engine is written without a compliance", file=sys.stderr)
+        return None
+    missing = [k for k in ("right", "wrong", "refused", "acceptedInvalid", "limited", "judge", "excludes")
+               if not isinstance(c, dict) or k not in c]
+    if missing:
+        print(f"warning: {path} has no {', '.join(missing)}, so its engine is written without a compliance", file=sys.stderr)
+        return None
+    return c
 
 
 ENGINES = [
     ("corvus-utf8", "corvus-regex-ecma262 UTF-8", "Java", facts.get("corvus-regex-ecma262", ""), compliance(args.compliance_corvus)),
     ("corvus-utf16", "corvus-regex-ecma262 UTF-16", "Java", facts.get("corvus-regex-ecma262", ""), compliance(args.compliance_corvus)),
     ("corvus-utf8-vector", "corvus-regex-ecma262 UTF-8 (Vector API)", "Java", facts.get("corvus-regex-ecma262", ""),
-     compliance(args.compliance_corvus_vector, "the JVM started with --add-modules jdk.incubator.vector")),
+     compliance(args.compliance_corvus_vector)),
     ("corvus-utf16-vector", "corvus-regex-ecma262 UTF-16 (Vector API)", "Java", facts.get("corvus-regex-ecma262", ""),
-     compliance(args.compliance_corvus_vector, "the JVM started with --add-modules jdk.incubator.vector")),
+     compliance(args.compliance_corvus_vector)),
     ("jdk", "java.util.regex", "Java", facts.get("jdk", ""), "not ECMA-262"),
-    ("tregex", "TRegex", "Java", facts.get("tregex", ""), compliance(args.compliance_tregex,
-        "judged over UTF-16 only, by the V8 runner (dataset.mjs) under GraalVM's Node, since GraalJS has no UTF-8 interface")),
+    ("tregex", "TRegex", "Java", facts.get("tregex", ""), compliance(args.compliance_tregex)),
 ]
 results = {}
 for key, name, _, _, _ in ENGINES:
@@ -126,13 +128,6 @@ else:
     job = f"each figure the median of {facts.get('passes')} passes after a warm-up, {facts.get('seconds')} s for each workload of each engine, each in a process of its own"
     spread = ""
 
-# The encodings each engine's runner answers in, which the central benchmark page's compliance figure is a share of:
-# every answer the test data asks in those encodings, so an answer the runner did not ask counts against the engine.
-ENCODINGS = {"tregex": ["utf16"], "v8": ["utf16"]}
-for key, _, _, _, counts in ENGINES:
-    if isinstance(counts, dict):
-        counts["encodings"] = ENCODINGS.get(key, ["utf16", "utf8"])
-
 data = {
     "meta": {
         "title": "corvus-regex-ecma262 for Java: the Industry benchmarks",
@@ -164,7 +159,8 @@ data = {
         "barLegend": "median of the passes", "whiskerLegend": "whisker: the fastest and the slowest pass",
     },
     "measures": {"time": {"label": "Time", "long": "time per count", "parts": ["time"]}},
-    "impls": [{"id": name, "name": name, "group": group, "version": version, "compliance": c} for _, name, group, version, c in ENGINES],
+    "impls": [{"id": name, "name": name, "group": group, "version": version, **({"compliance": c} if c is not None else {})}
+              for _, name, group, version, c in ENGINES],
     "schemas": [{"name": w, "note": ("counts differ: " + differs[w]) if w in differs else "",
                  "meta": [["text", TEXTS.get(w.split(":")[0], w.split(":")[0])]]} for w in ids],
     "results": results,

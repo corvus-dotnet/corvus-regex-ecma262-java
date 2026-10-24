@@ -184,8 +184,13 @@ abstract class ByteFinder {
         // that character, as common as its script's letters are (the Russian names, among them a small letter, 537 us
         // against 2,003; the Chinese 118 against 290). The packed search over UTF-16 takes any (the Chinese 330 against
         // 162).
+        // Not where the pair search tests each of its positions once or twice: the cases of a word written out (Holmes
+        // under the i flag) share few first two bytes, but a letter's two cases are one masked test, which costs far
+        // less than sixteen compares (70 us against 203); over UTF-16 the long s packs to a byte of its own, a second
+        // test (Sherlock under the i flag, 65 us against 226).
         if (Kernels.vector() && (firsts == null || firsts.lo >= 0) && (rank != RANK || asciiPrefixes(literals))) {
-            Prefixes prefixes = Prefixes.of(literals);
+            Pair pair = Pair.of(literals, rank);
+            Prefixes prefixes = pair != null && pair.mi.length <= 2 && pair.mj.length <= 2 ? null : Prefixes.of(literals);
             if (prefixes != null) {
                 return prefixes;
             }

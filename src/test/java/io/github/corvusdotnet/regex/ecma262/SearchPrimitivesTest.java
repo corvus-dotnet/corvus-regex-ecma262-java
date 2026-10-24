@@ -1,6 +1,7 @@
 package io.github.corvusdotnet.regex.ecma262;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -176,6 +177,19 @@ class SearchPrimitivesTest {
         assertNull(ByteFinder.Prefixes.of(utf8("Sherlock", "Holmes")));
         assertNull(ByteFinder.Prefixes.of(utf8("Sherlock", "Holmes", "W")));
         assertNull(ByteFinder.Prefixes.of(utf8("aa", "ab", "ac", "ad", "ae", "af", "ag", "ah", "ai")));
+        // A word's cases written out share few first two bytes, but the pair search tests each position once (a
+        // letter's two cases by a mask), which costs less: it is kept (Holmes under the i flag, 70 us against 203).
+        List<String> cases = new ArrayList<>();
+        for (int k = 0; k < 16; k++) {
+            StringBuilder w = new StringBuilder();
+            for (int i = 0; i < 4; i++) {
+                char c = "holm".charAt(i);
+                w.append((k >> i & 1) != 0 ? Character.toUpperCase(c) : c);
+            }
+            cases.add(w.toString());
+        }
+        ByteFinder forms = ByteFinder.of(utf8(cases.toArray(new String[0])), true);
+        assertFalse(forms instanceof ByteFinder.Prefixes, forms.getClass().getSimpleName());
         // A literal of one byte has no pair of positions; the cases of a word written out are every sequence.
         assertNull(ByteFinder.Pair.of(utf8("S", "H")));
         assertTrue(ByteFinder.Pair.of(utf8("the", "thE", "tHe", "tHE", "The", "ThE", "THe", "THE")).every);

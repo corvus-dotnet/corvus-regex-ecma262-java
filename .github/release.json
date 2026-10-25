@@ -3,13 +3,27 @@
     {
       "name": "corvus-regex-ecma262",
       "tag": "v",
-      "paths": ["pom.xml", "src/main/"]
+      "paths": [
+        "pom.xml",
+        "src/main/"
+      ],
+      "stamp": [
+        {
+          "file": "pom.xml",
+          "placeholder": "<version>0.0.0-SNAPSHOT</version>",
+          "with": "<version>{version}</version>",
+          "count": 1
+        }
+      ]
     },
     {
       "name": "harness",
       "harnessOf": "corvus-regex-ecma262",
       "tag": "harness-",
-      "paths": ["Dockerfile", "tools/benchmarks/"]
+      "paths": [
+        "Dockerfile",
+        "tools/benchmarks/"
+      ]
     }
   ]
 }

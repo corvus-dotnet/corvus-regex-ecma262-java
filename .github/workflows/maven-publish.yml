@@ -1,7 +1,7 @@
 # Publishes io.github.corvus-dotnet:corvus-regex-ecma262 to Maven Central when a GitHub release tagged v<version> is
 # published, which auto-release.yml does after a merged pull request that changed the library. The version is the tag's:
-# pom.xml holds 0.0.0-SNAPSHOT, and this workflow writes the tag's version into it before it builds (it is never
-# committed). A version already on Maven Central publishes nothing, so re-running a release's job is safe. A harness
+# pom.xml holds 0.0.0-SNAPSHOT, and tools/release/stamp.ps1 writes the tag's version into it before the build (it is
+# never committed). A version already on Maven Central publishes nothing, so re-running a release's job is safe. A harness
 # release (a tag starting harness-) publishes the harness image alone (harness-image.yml).
 #
 # It runs in the maven-central environment (deployments from main and from v* tags only), whose secrets are a Central
@@ -88,10 +88,8 @@ jobs:
     - name: Write the version into pom.xml
       if: steps.version.outputs.published == 'false'
       env:
-        VERSION: ${{ steps.version.outputs.version }}
-      run: |
-        sed -i "0,/<version>0\.0\.0-SNAPSHOT<\/version>/s//<version>$VERSION<\/version>/" pom.xml
-        grep -q -m1 "<version>$VERSION</version>" pom.xml || { echo "::error::pom.xml does not hold 0.0.0-SNAPSHOT to replace"; exit 1; }
+        TAG: ${{ github.event.release.tag_name }}
+      run: pwsh -NoProfile -File tools/release/stamp.ps1 -Tag "$TAG"
     - name: The tests, in both modes
       if: steps.version.outputs.published == 'false'
       env:

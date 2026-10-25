@@ -23,6 +23,12 @@ interface ByteKernels {
      */
     int unitsIndexOf(char[] c, int from, int n, char[] lohi, boolean wide);
 
+    /** Whether any of the first {@code n} units of {@code c} is beyond Latin-1 (0x100 or more). */
+    boolean beyondLatin1(char[] c, int n);
+
+    /** The low byte of each of the first {@code n} units of {@code c}, into {@code out}. */
+    void narrow(char[] c, int n, byte[] out);
+
     /** The search of the literals' first two bytes, {@link ByteFinder.Prefixes#find}. */
     long prefixesFind(ByteFinder.Prefixes p, byte[] h, int from, int end);
 }

@@ -4,6 +4,7 @@ import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.ShortVector;
 import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorOperators;
+import jdk.incubator.vector.VectorShape;
 import jdk.incubator.vector.VectorSpecies;
 
 /**
@@ -19,6 +20,8 @@ final class VectorBytes implements ByteKernels {
     private static final int L = S.length();
     private static final VectorSpecies<Short> U = ShortVector.SPECIES_PREFERRED;
     private static final int LU = U.length();
+    /** Bytes as many as {@link #U}'s units, for the narrowing of units to bytes. */
+    private static final VectorSpecies<Byte> HALF = VectorSpecies.of(byte.class, VectorShape.forBitSize(U.vectorBitSize() / 2));
 
     @Override
     public int indexOf(byte[] h, int from, int n, int b) {
@@ -262,5 +265,34 @@ final class VectorBytes implements ByteKernels {
             }
         }
         return -1;
+    }
+
+    @Override
+    public void narrow(char[] c, int n, byte[] out) {
+        int i = 0;
+        for (; i <= n - LU; i += LU) {
+            ((ByteVector) ShortVector.fromCharArray(U, c, i).convertShape(VectorOperators.S2B, HALF, 0)).intoArray(out, i);
+        }
+        for (; i < n; i++) {
+            out[i] = (byte) c[i];
+        }
+    }
+
+    @Override
+    public boolean beyondLatin1(char[] c, int n) {
+        int i = 0;
+        for (; i <= n - LU; i += LU) {
+            ShortVector v = ShortVector.fromCharArray(U, c, i);
+            // As signed units, beyond Latin-1 is above 0xFF or below zero (0x8000 up).
+            if (v.compare(VectorOperators.GT, (short) 0xFF).or(v.compare(VectorOperators.LT, (short) 0)).anyTrue()) {
+                return true;
+            }
+        }
+        for (; i < n; i++) {
+            if (c[i] > 0xFF) {
+                return true;
+            }
+        }
+        return false;
     }
 }

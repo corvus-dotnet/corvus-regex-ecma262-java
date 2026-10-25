@@ -301,4 +301,48 @@ class SearchPrimitivesTest {
             }
         }
     }
+
+    @Test
+    void thePackedSearchFindsTheLeftmostLiteralInLongStringsOfEitherStorage() {
+        // A string of 32K units or more has its storage found once: all Latin-1, its chunks are copied by getBytes;
+        // with one unit beyond, the JDK stores it as UTF-16 and, with the Vector API, its chunks are copied by getChars
+        // and narrowed by vectors. Either way the search finds what a naive search finds.
+        Xorshift seed = new Xorshift(0x6d0c21);
+        String[][] sets = {{"Huck", "Saw"}, {"the", "The"}, {"ab", "abc", "ba"}};
+        String alphabet = "abcehrstuwHSTk ,.\u00e9";
+        for (String[] set : sets) {
+            byte[][] low = new byte[set.length][];
+            int longest = 0;
+            for (int k = 0; k < set.length; k++) {
+                low[k] = set[k].getBytes(StandardCharsets.ISO_8859_1);
+                longest = Math.max(longest, set[k].length());
+            }
+            ByteFinder finder = ByteFinder.of(low, true);
+            for (int round = 0; round < 8; round++) {
+                StringBuilder t = new StringBuilder();
+                int n = 33000 + seed.below(9000);
+                while (t.length() < n) {
+                    t.append(seed.below(50) == 0 ? set[seed.below(set.length)] : String.valueOf(alphabet.charAt(seed.below(alphabet.length()))));
+                }
+                if (round % 2 == 1) {
+                    // One unit beyond Latin-1, anywhere: the string is stored as UTF-16.
+                    t.setCharAt(seed.below(t.length()), '\u0100');
+                }
+                String s = t.toString();
+                for (int from = 0; from <= s.length() + 1; from += 1 + seed.below(3000)) {
+                    long want = -1;
+                    for (int i = from; i < s.length() && want < 0; i++) {
+                        for (String l : set) {
+                            if (s.startsWith(l, i)) {
+                                want = ByteFinder.span(i, i + l.length());
+                                break;
+                            }
+                        }
+                    }
+                    assertEquals(want, UnitSearch.findPacked(s, from, finder, set, longest),
+                            String.join("|", set) + " round " + round + " from " + from);
+                }
+            }
+        }
+    }
 }

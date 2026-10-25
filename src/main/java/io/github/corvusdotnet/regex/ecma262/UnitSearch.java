@@ -22,12 +22,56 @@ final class UnitSearch {
      */
     private static final class Pack {
         final byte[] buf = new byte[PACK];
+        /** The chunk's units, for the Vector API's narrowing (see {@link #narrows}). */
+        final char[] units = new char[PACK];
         String text;
         int start;
         int end;
+        /** The last string whose storage was found ({@link #wide}), and whether it holds a unit beyond Latin-1. */
+        String storageOf;
+        boolean wide;
     }
 
     private static final ThreadLocal<Pack> PACKS = ThreadLocal.withInitial(Pack::new);
+
+    /** The fewest units of a string whose storage is found before its chunks are narrowed (see {@link #narrows}). */
+    private static final int STORAGE_FROM = 32768;
+
+    /**
+     * Whether the chunks of {@code s} are narrowed by the Vector API rather than by {@code getBytes}: the units copied by
+     * {@link String#getChars} (the JDK's copy of a string stored as UTF-16) and narrowed a vector at a time where the
+     * string is stored as UTF-16, which {@link String#getBytes(int, int, byte[], int)} narrows a unit at a time (the
+     * Leipzig corpus, which two units beyond Latin-1 make one: Huck[a-zA-Z]+|Saw[a-zA-Z]+ 4,563 us against 3,149).
+     */
+    private static boolean narrows(String s, Pack pack) {
+        if (Kernels.VECTOR == null || s.length() < STORAGE_FROM) {
+            return false;
+        }
+        if (pack.storageOf != s) {
+            pack.wide = beyondLatin1(s, pack.units);
+            pack.storageOf = s;
+        }
+        return pack.wide;
+    }
+
+    /**
+     * Whether a string holds a unit beyond Latin-1, which is whether the JDK stores it as UTF-16 (with compact strings,
+     * as by default): {@link String#getBytes(int, int, byte[], int)} copies a string stored as Latin-1 at memory speed,
+     * where the narrowing of a vector of units would only add the inflation {@link String#getChars} makes of it
+     * (Sherlock|Holmes over the Sherlock Holmes text, Latin-1, 35.7 us against 57.4), but narrows one stored as UTF-16 a
+     * unit at a time. Found once for each string on a thread, a chunk of units at a time.
+     */
+    private static boolean beyondLatin1(String s, char[] units) {
+        int n = s.length();
+        for (int at = 0; at < n; at += PACK) {
+            int end = Math.min(at + PACK, n);
+            s.getChars(at, end, units, 0);
+            if (Kernels.VECTOR.beyondLatin1(units, end - at)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /**
      * The leftmost occurrence at or after {@code from} of one of {@code all} (in the pattern's order, the first of those
@@ -55,7 +99,12 @@ final class UnitSearch {
         } else {
             at = from;
             end = Math.min(at + FIRST_PACK, units);
-            s.getBytes(at, end, buf, 0);
+            if (narrows(s, pack)) {
+                s.getChars(at, end, pack.units, 0);
+                Kernels.VECTOR.narrow(pack.units, end - at, buf);
+            } else {
+                s.getBytes(at, end, buf, 0);
+            }
             pack.text = s;
             pack.start = at;
             pack.end = end;
@@ -87,7 +136,12 @@ final class UnitSearch {
             }
             at = end - overlap;
             end = Math.min(at + PACK, units);
-            s.getBytes(at, end, buf, 0);
+            if (narrows(s, pack)) {
+                s.getChars(at, end, pack.units, 0);
+                Kernels.VECTOR.narrow(pack.units, end - at, buf);
+            } else {
+                s.getBytes(at, end, buf, 0);
+            }
             pack.text = s;
             pack.start = at;
             pack.end = end;

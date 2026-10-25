@@ -1,0 +1,15 @@
+{
+  "packages": [
+    {
+      "name": "corvus-regex-ecma262",
+      "tag": "v",
+      "paths": ["pom.xml", "src/main/"]
+    },
+    {
+      "name": "harness",
+      "harnessOf": "corvus-regex-ecma262",
+      "tag": "harness-",
+      "paths": ["Dockerfile", "tools/benchmarks/"]
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 package io.github.corvusdotnet.regex.ecma262;
 
 /**
- * A match given a limit (see {@link Regex#tryIsMatch(String, java.time.Duration)}) was abandoned before it found its
- * answer ({@code MatchError} of the Rust crate).
+ * A match of a pattern given a limit (see {@link Regex#compile(String, Flags, java.time.Duration)}) was abandoned
+ * before it found its answer ({@code MatchError} of the Rust crate).
  */
 public final class MatchLimitException extends RuntimeException {
     private static final long serialVersionUID = 1L;

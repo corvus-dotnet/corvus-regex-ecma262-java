@@ -180,10 +180,13 @@
               <!-- Before Java 18, javadoc reads the sources it finds through the patched module in the platform's
                    encoding, whatever -encoding says (windows-1252 on Windows). -->
               <additionalJOption>-J-Dfile.encoding=UTF-8</additionalJOption>
-              <!-- The Vector API's searches read the incubating module, as javac does. -->
+              <!-- The Vector API's searches read the incubating module, as javac does. javadoc has no -Xlint, so
+                   the compiler inside it is given javac's -Xlint:-incubating through -XD, or its warning about the
+                   module would fail the build. -->
               <additionalOptions>
                 <additionalOption>--add-modules</additionalOption>
                 <additionalOption>jdk.incubator.vector</additionalOption>
+                <additionalOption>-XD-Xlint:-incubating</additionalOption>
               </additionalOptions>
             </configuration>
             <executions>

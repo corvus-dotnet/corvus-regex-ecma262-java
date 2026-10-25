@@ -32,6 +32,10 @@ def failure(r):
     m = re.match(r"counted (\d+) where V8 counts (\d+)", str(r.get("error", "")))
     if m:
         return {"wrongCount": {"counted": int(m.group(1)), "v8": int(m.group(2))}}
+    # A count other than V8's from an engine of another dialect ("<engine> n, V8 m"): a wrong answer all the same.
+    m = re.search(r"(\d+), V8 (\d+)$", str(r.get("differs", "")))
+    if m:
+        return {"wrongCount": {"counted": int(m.group(1)), "v8": int(m.group(2))}}
     return {"error": r["error"]} if "error" in r else None
 
 ap = argparse.ArgumentParser()
@@ -100,7 +104,7 @@ for key, name, _, _, _ in ENGINES:
         r = rows.get(w)
         if r is None:
             continue
-        results[name][w] = failure(r) if "error" in r else {"time": {"median": r["median"], "min": r["min"], "max": r["max"]}}
+        results[name][w] = failure(r) if "error" in r or "differs" in r else {"time": {"median": r["median"], "min": r["min"], "max": r["max"]}}
 if v8:
     v8_name = "V8"
     ENGINES.append(("v8", v8_name, "V8", v8["engine"], compliance(args.compliance_v8)))
@@ -108,9 +112,6 @@ if v8:
     for w in ids:
         r = v8["results"].get(w)
         results[v8_name][w] = {"time": {"median": r["median"], "min": r["min"], "max": r["max"]}} if r and "error" not in r else (failure(r) if r else None)
-# Where java.util.regex counts otherwise than V8 (the oracle), the row says so; an ECMA-262 engine that does is an error
-# above.
-differs = {w: r["differs"] for w, r in run["results"].get("jdk", {}).items() if isinstance(r, dict) and "differs" in r}
 
 TEXTS = {"sherlock": "Sherlock Holmes (0.6 M chars)", "leipzig": "Leipzig corpus (16 M chars)", "mariomka": "mariomka (0.05 M chars)",
          "rebar-ru": "OpenSubtitles ru (1.2 M chars)", "rebar-zh": "OpenSubtitles zh (0.3 M chars)"}
@@ -144,8 +145,7 @@ data = {
         "runs": int(facts.get("passes") or 0),
         "versions": {name: version for _, name, _, version, _ in ENGINES},
         "facts": [["Host", host]] + ([["Runner", runner]] if runner else []) + [["Runtime", facts.get("java", "") + "; " + facts.get("tregex", "") + ("; " + v8["engine"] if v8 else "")], ["Harness", job]]
-                 + ([["Spread", spread]] if spread else [])
-                 + ([["Counts", "java.util.regex counts otherwise than V8 on " + str(len(differs)) + " workloads (each says so)"]] if differs else []),
+                 + ([["Spread", spread]] if spread else []),
         "method": "<p>Each figure is one count of every match a global search finds over the whole text, after an empty match going on one character later. "
                   "This library runs with the workload's flags and u, in each of its two modes: its own searches, and the Vector API's, "
                   "which it takes where the JVM is started with --add-modules jdk.incubator.vector; java.util.regex with the pattern as it is and the flags i (with Unicode case), m and s, "
@@ -161,7 +161,7 @@ data = {
     "measures": {"time": {"label": "Time", "long": "time per count", "parts": ["time"]}},
     "impls": [{"id": name, "name": name, "group": group, "version": version, **({"compliance": c} if c is not None else {})}
               for _, name, group, version, c in ENGINES],
-    "schemas": [{"name": w, "note": ("counts differ: " + differs[w]) if w in differs else "",
+    "schemas": [{"name": w, "note": "",
                  "meta": [["text", TEXTS.get(w.split(":")[0], w.split(":")[0])]]} for w in ids],
     "results": results,
 }

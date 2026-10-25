@@ -1,6 +1,7 @@
 package io.github.corvusdotnet.regex.ecma262;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -116,6 +117,8 @@ class SearchPrimitivesTest {
         {"aa", "ab"}, {"xyz", "xéz"}, {"Sherlock"}, {"zqj"}, {"jj j"}, {"S", "H"}, {"Sherlock", "Street"},
         {"Tom", "river", "Tomas"}, {"awyer", "inn"}, {"a"},
         {"Sherlock", "Holmes", "Watson", "Irene", "Adler", "John", "Baker", "sherlock", "holmes", "watson", "irene"},
+        {"Sherlock", "Holmes", "Watson", "Irene", "Adler", "John", "Baker"},
+        {"ab", "ac", "ba", "bc", "ca", "cb", "aa", "bb", "abc"},
     };
 
     static final String[] ALPHABET = {"a", "b", "c", "e", "h", "r", "t", "H", "S", "T", "E", " ", "ш", "Ш",
@@ -138,6 +141,7 @@ class SearchPrimitivesTest {
     void theFindersFindTheLeftmostLiteral() {
         Xorshift seed = new Xorshift(0x51ed270b);
         int pairs = 0;
+        int prefixed = 0;
         for (String[] set : SETS) {
             byte[][] literals = utf8(set);
             List<ByteFinder> finders = new ArrayList<>();
@@ -148,6 +152,11 @@ class SearchPrimitivesTest {
             if (pair != null) {
                 finders.add(pair);
                 pairs++;
+            }
+            ByteFinder.Prefixes prefixes = ByteFinder.Prefixes.of(literals);
+            if (prefixes != null) {
+                finders.add(prefixes);
+                prefixed++;
             }
             for (int round = 0; round < 100; round++) {
                 byte[] h = text(seed, set, seed.below(300)).getBytes(StandardCharsets.UTF_8);
@@ -163,6 +172,24 @@ class SearchPrimitivesTest {
             }
         }
         assertTrue(pairs >= 8, pairs + " pair searches");
+        // Three literals or more, of two bytes or more, with at most eight first two bytes between them.
+        assertTrue(prefixed >= 4, prefixed + " searches of the first two bytes");
+        assertNull(ByteFinder.Prefixes.of(utf8("Sherlock", "Holmes")));
+        assertNull(ByteFinder.Prefixes.of(utf8("Sherlock", "Holmes", "W")));
+        assertNull(ByteFinder.Prefixes.of(utf8("aa", "ab", "ac", "ad", "ae", "af", "ag", "ah", "ai")));
+        // A word's cases written out share few first two bytes, but the pair search tests each position once (a
+        // letter's two cases by a mask), which costs less: it is kept (Holmes under the i flag, 70 us against 203).
+        List<String> cases = new ArrayList<>();
+        for (int k = 0; k < 16; k++) {
+            StringBuilder w = new StringBuilder();
+            for (int i = 0; i < 4; i++) {
+                char c = "holm".charAt(i);
+                w.append((k >> i & 1) != 0 ? Character.toUpperCase(c) : c);
+            }
+            cases.add(w.toString());
+        }
+        ByteFinder forms = ByteFinder.of(utf8(cases.toArray(new String[0])), true);
+        assertFalse(forms instanceof ByteFinder.Prefixes, forms.getClass().getSimpleName());
         // A literal of one byte has no pair of positions; the cases of a word written out are every sequence.
         assertNull(ByteFinder.Pair.of(utf8("S", "H")));
         assertTrue(ByteFinder.Pair.of(utf8("the", "thE", "tHe", "tHE", "The", "ThE", "THe", "THE")).every);
@@ -232,6 +259,88 @@ class SearchPrimitivesTest {
                         }
                     }
                     assertEquals(want, set.find(s, from));
+                }
+            }
+        }
+    }
+
+    @Test
+    void aUnitSetFindsItsFirstUnitOverChunksAndBeyondAscii() {
+        // With the Vector API a set's search copies the text a chunk of 4,096 units at a time and tests sixteen at once
+        // against four ranges and beyond ASCII: sets of more ASCII ranges than four (merged), of none, of units on both
+        // sides of 0x8000 (signed in the test), over texts that cross chunks with their members far apart.
+        Xorshift seed = new Xorshift(0x2b9e5);
+        int[][] sets = {{'a', 'a', 'c', 'c', 'e', 'e', 'g', 'g', 'i', 'i', 'k', 'k'}, {0x7FFF, 0x8001}, {0xFF10, 0xFF19},
+            {0x0410, 0x042F}, {'0', '9', 0x0660, 0x0669}, {0xFFFF, 0xFFFF}, {'x', 'x', 0x10000, 0x10FFFF}};
+        String alphabet = "bdfhjlmnopqrstuvwyz .\u7FFE\u7FFF\u8000\u8001\u8002\uFF0F\uFF10\uFF19\uFF1A\u040F\u0410\u042F\u0430"
+                + "\u0669\uFFFE\uFFFF\uD83D\uDE00acegikx5";
+        for (int[] r : sets) {
+            UnitSearch.UnitSet set = new UnitSearch.UnitSet(r);
+            for (int round = 0; round < 40; round++) {
+                StringBuilder t = new StringBuilder();
+                int n = seed.below(9000);
+                for (int k = 0; k < n; k++) {
+                    // Mostly units outside every set, so that members are far apart.
+                    t.append(seed.below(50) == 0 ? alphabet.charAt(seed.below(alphabet.length())) : 'q');
+                }
+                String s = t.toString();
+                int want = -1;
+                for (int from = s.length(); from >= 0; from--) {
+                    if (from < s.length()) {
+                        char u = s.charAt(from);
+                        for (int i = 0; i < r.length; i += 2) {
+                            if (u >= r[i] && u <= r[i + 1]) {
+                                want = from;
+                            }
+                        }
+                    }
+                    if (from % 97 == 0 || from == s.length()) {
+                        assertEquals(want, set.find(s, from), "set " + java.util.Arrays.toString(r) + " from " + from);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void thePackedSearchFindsTheLeftmostLiteralInLongStringsOfEitherStorage() {
+        // A string of 32K units or more has its storage found once: all Latin-1, its chunks are copied by getBytes;
+        // with one unit beyond, the JDK stores it as UTF-16 and, with the Vector API, its chunks are copied by getChars
+        // and narrowed by vectors. Either way the search finds what a naive search finds.
+        Xorshift seed = new Xorshift(0x6d0c21);
+        String[][] sets = {{"Huck", "Saw"}, {"the", "The"}, {"ab", "abc", "ba"}};
+        String alphabet = "abcehrstuwHSTk ,.\u00e9";
+        for (String[] set : sets) {
+            byte[][] low = new byte[set.length][];
+            int longest = 0;
+            for (int k = 0; k < set.length; k++) {
+                low[k] = set[k].getBytes(StandardCharsets.ISO_8859_1);
+                longest = Math.max(longest, set[k].length());
+            }
+            ByteFinder finder = ByteFinder.of(low, true);
+            for (int round = 0; round < 8; round++) {
+                StringBuilder t = new StringBuilder();
+                int n = 33000 + seed.below(9000);
+                while (t.length() < n) {
+                    t.append(seed.below(50) == 0 ? set[seed.below(set.length)] : String.valueOf(alphabet.charAt(seed.below(alphabet.length()))));
+                }
+                if (round % 2 == 1) {
+                    // One unit beyond Latin-1, anywhere: the string is stored as UTF-16.
+                    t.setCharAt(seed.below(t.length()), '\u0100');
+                }
+                String s = t.toString();
+                for (int from = 0; from <= s.length() + 1; from += 1 + seed.below(3000)) {
+                    long want = -1;
+                    for (int i = from; i < s.length() && want < 0; i++) {
+                        for (String l : set) {
+                            if (s.startsWith(l, i)) {
+                                want = ByteFinder.span(i, i + l.length());
+                                break;
+                            }
+                        }
+                    }
+                    assertEquals(want, UnitSearch.findPacked(s, from, finder, set, longest),
+                            String.join("|", set) + " round " + round + " from " + from);
                 }
             }
         }

@@ -6,7 +6,7 @@
 
   <groupId>io.github.corvus-dotnet</groupId>
   <artifactId>corvus-regex-ecma262</artifactId>
-  <version>0.1.0</version>
+  <version>0.0.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <name>corvus-regex-ecma262</name>

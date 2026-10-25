@@ -49,17 +49,19 @@ re.replaceAll("2026-10-22", "$<month>/$<year>");          // "10/2026-22"
 
 ## Installing
 
-From Maven Central, for Java 17 and later:
+From [Maven Central](https://central.sonatype.com/artifact/io.github.corvus-dotnet/corvus-regex-ecma262), for Java 17
+and later, at the latest version there:
 
 ```xml
 <dependency>
   <groupId>io.github.corvus-dotnet</groupId>
   <artifactId>corvus-regex-ecma262</artifactId>
-  <version>0.1.0</version>
+  <version><!-- the latest version --></version>
 </dependency>
 ```
 
-or with Gradle, `implementation("io.github.corvus-dotnet:corvus-regex-ecma262:0.1.0")`. The library has no dependency.
+or with Gradle, `implementation("io.github.corvus-dotnet:corvus-regex-ecma262:<version>")`. The library has no
+dependency.
 For the Vector API's searches, start the JVM with `--add-modules jdk.incubator.vector` (JDK 21 or later).
 
 ## Benchmarks
@@ -85,9 +87,14 @@ harness-<version>.<n> --latest=false`), which publishes the harness image and no
 
 ## Releasing
 
-Set the version in `pom.xml`, merge, and publish a GitHub release tagged `v<version>`: `maven-publish.yml` runs the tests
-and the test data in both modes, then signs and publishes the version to Maven Central (a version already there
-publishes nothing), and `harness-image.yml` publishes the harness image under the same tag.
+Every merged pull request releases what it changed, unless it is labelled `no_release`. `auto-release.yml` gives the
+library the next patch version when `pom.xml` or `src/main/` changed since its last tag, and makes a GitHub release
+tagged `v<version>` on the merge commit: `maven-publish.yml` writes the version into `pom.xml` (which holds
+`0.0.0-SNAPSHOT`), runs the tests and the test data in both modes, then signs and publishes it to Maven Central, and
+`harness-image.yml` publishes the harness image under the same tag. When only the harness changed (`Dockerfile`,
+`tools/benchmarks/`), the release is `harness-<version>.<n>`, which publishes the image alone. A pull request that
+needs a minor or major version sets `nextVersion` for the package in `.github/release.json`; a minor version is a
+breaking change. A pull request labelled `no_release` releases nothing, and its changes ship with the next release.
 
 ## Building
 

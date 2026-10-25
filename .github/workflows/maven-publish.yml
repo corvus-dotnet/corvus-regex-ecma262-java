@@ -1,7 +1,8 @@
-# Publishes io.github.corvus-dotnet:corvus-regex-ecma262 to Maven Central when a GitHub release is published. The
-# release's tag must be v<version> for the version in pom.xml; a version already on Maven Central publishes nothing, so
-# re-running a release's job is safe. To release: set the version in pom.xml, merge, and publish a release tagged
-# v<version>. A harness release (a tag starting harness-) publishes the harness image alone (harness-image.yml).
+# Publishes io.github.corvus-dotnet:corvus-regex-ecma262 to Maven Central when a GitHub release tagged v<version> is
+# published, which auto-release.yml does after a merged pull request that changed the library. The version is the tag's:
+# pom.xml holds 0.0.0-SNAPSHOT, and this workflow writes the tag's version into it before it builds (it is never
+# committed). A version already on Maven Central publishes nothing, so re-running a release's job is safe. A harness
+# release (a tag starting harness-) publishes the harness image alone (harness-image.yml).
 #
 # It runs in the maven-central environment (deployments from main and from v* tags only), whose secrets are a Central
 # Portal user token (CENTRAL_TOKEN_USERNAME, CENTRAL_TOKEN_PASSWORD) and the signing key (GPG_PRIVATE_KEY,
@@ -30,18 +31,18 @@ jobs:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         persist-credentials: false
-    - name: Check the tag names this version and whether Maven Central has it
+    - name: Take the version from the tag and ask whether Maven Central has it
       id: version
       env:
         TAG: ${{ github.event.release.tag_name }}
         TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
         TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
       run: |
-        version=$(sed -n '0,/<version>/s|.*<version>\(.*\)</version>.*|\1|p' pom.xml)
-        if [ "$TAG" != "v$version" ]; then
-          echo "::error::The release's tag is $TAG but pom.xml says $version (the tag must be v$version)."
+        if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+          echo "::error::The release's tag is $TAG, which is not v<major>.<minor>.<patch>."
           exit 1
         fi
+        version=${BASH_REMATCH[1]}
         echo "version=$version" >> "$GITHUB_OUTPUT"
         # The Central Portal knows a version as soon as it is published (the repository mirrors it later).
         auth=$(printf '%s:%s' "$TOKEN_USERNAME" "$TOKEN_PASSWORD" | base64 -w0)
@@ -84,6 +85,13 @@ jobs:
         ref: cff0860b7ebc5eb9c801eb9f8cec9d5398688ff2
         path: ecma262-regex-test-data
         persist-credentials: false
+    - name: Write the version into pom.xml
+      if: steps.version.outputs.published == 'false'
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        sed -i "0,/<version>0\.0\.0-SNAPSHOT<\/version>/s//<version>$VERSION<\/version>/" pom.xml
+        grep -q -m1 "<version>$VERSION</version>" pom.xml || { echo "::error::pom.xml does not hold 0.0.0-SNAPSHOT to replace"; exit 1; }
     - name: The tests, in both modes
       if: steps.version.outputs.published == 'false'
       env:

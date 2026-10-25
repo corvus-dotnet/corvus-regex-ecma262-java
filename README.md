@@ -47,10 +47,20 @@ re.captures("on 2026-10-22").group("month");             // "10"
 re.replaceAll("2026-10-22", "$<month>/$<year>");          // "10/2026-22"
 ```
 
-## Status
+## Installing
 
-Not yet released: the first release, 0.1.0 on Maven Central as `io.github.corvus-dotnet:corvus-regex-ecma262`, follows
-the benchmark harness.
+From Maven Central, for Java 17 and later:
+
+```xml
+<dependency>
+  <groupId>io.github.corvus-dotnet</groupId>
+  <artifactId>corvus-regex-ecma262</artifactId>
+  <version>0.1.0</version>
+</dependency>
+```
+
+or with Gradle, `implementation("io.github.corvus-dotnet:corvus-regex-ecma262:0.1.0")`. The library has no dependency.
+For the Vector API's searches, start the JVM with `--add-modules jdk.incubator.vector` (JDK 21 or later).
 
 ## Benchmarks
 
@@ -72,6 +82,12 @@ else running on the machine. The file gives the commit of the test data it was m
 checks the data out at, so moving CI's pin means working it out again.
 A change to the harness alone, such as new counts, is released as a harness release (`gh release create
 harness-<version>.<n> --latest=false`), which publishes the harness image and no package.
+
+## Releasing
+
+Set the version in `pom.xml`, merge, and publish a GitHub release tagged `v<version>`: `maven-publish.yml` runs the tests
+and the test data in both modes, then signs and publishes the version to Maven Central (a version already there
+publishes nothing), and `harness-image.yml` publishes the harness image under the same tag.
 
 ## Building
 

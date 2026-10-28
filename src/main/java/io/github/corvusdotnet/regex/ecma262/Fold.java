@@ -11,7 +11,8 @@ import java.util.Map;
  * match when they canonicalize to the same character. With the u flag it is Unicode simple case folding; with no flag
  * it is the single character uppercase mapping of a UTF-16 code unit, which never maps a character outside ASCII into
  * ASCII. The parser applies the equivalence to every literal and class as it reads them, so only a backreference needs
- * the function when matching. The folding and the uppercase mapping come from the tables of {@link Ucd}.
+ * the function when matching. The folding and the uppercase mapping come from the tables of the {@link Ucd} of the
+ * pattern's version of Unicode.
  */
 final class Fold {
     private Fold() {}
@@ -24,17 +25,17 @@ final class Fold {
         0x1FE4, 0x1FE6, 0x1FE7, 0x1FF2, 0x1FF4, 0x1FF6, 0x1FF7, 0x1FFC, 0x1FFC, 0xFB00, 0xFB06, 0xFB13, 0xFB17,
     }, false);
 
-    /** The Canonicalize function of ECMA-262 for case-insensitive matching. */
-    static int canonicalize(int r, boolean unicodeMode) {
+    /** The Canonicalize function of ECMA-262 for case-insensitive matching, with the case mappings of a version. */
+    static int canonicalize(Ucd ucd, int r, boolean unicodeMode) {
         if (unicodeMode) {
             // Every character of a simple case folding class folds to the same character.
-            return Ucd.fold(r);
+            return ucd.fold(r);
         }
         // A character beyond the Basic Multilingual Plane is two code units, and neither has an uppercase form.
         if (r > 0xFFFF || MULTI_UPPER.contains(r)) {
             return r;
         }
-        int upper = Ucd.toUpper(r);
+        int upper = ucd.toUpper(r);
         if (r >= 128 && upper < 128 || upper > 0xFFFF) {
             return r;
         }
@@ -72,35 +73,40 @@ final class Fold {
         }
     }
 
-    private static final class UnicodeFoldTable {
-        static final FoldTable TABLE = build();
-
-        private static FoldTable build() {
-            // A class is a character that others fold to, with those others.
-            Map<Integer, IntList> classes = new HashMap<>();
-            for (int r : Ucd.folding()) {
-                int key = Ucd.fold(r);
-                classes.computeIfAbsent(key, k -> IntList.of(k)).add(r);
-            }
-            return new FoldTable(classes);
-        }
+    /**
+     * Whether two characters are equal ignoring case, with the case mappings of the version of Unicode whose major
+     * number a backreference carries ({@code Compiler}): the test of a case-insensitive backreference. It is a call of
+     * its own so that the matcher's method, which must stay under HotSpot's limit for compiling a method, grows by
+     * nothing.
+     */
+    static boolean equalIgnoringCase(int major, int a, int b, boolean unicodeMode) {
+        Ucd ucd = Ucd.byMajor(major);
+        return canonicalize(ucd, a, unicodeMode) == canonicalize(ucd, b, unicodeMode);
     }
 
-    private static final class LegacyFoldTable {
-        static final FoldTable TABLE = build();
-
-        private static FoldTable build() {
-            Map<Integer, IntList> classes = new HashMap<>();
-            for (int r = 0; r <= 0xFFFF; r++) {
-                classes.computeIfAbsent(canonicalize(r, false), k -> new IntList()).add(r);
-            }
-            return new FoldTable(classes);
+    /** The table of the u flag's grammar under a version of Unicode ({@link Ucd#unicodeFold} keeps it). */
+    static FoldTable unicodeFoldTable(Ucd ucd) {
+        // A class is a character that others fold to, with those others.
+        Map<Integer, IntList> classes = new HashMap<>();
+        for (int r : ucd.folding()) {
+            int key = ucd.fold(r);
+            classes.computeIfAbsent(key, k -> IntList.of(k)).add(r);
         }
+        return new FoldTable(classes);
     }
 
-    /** The table of the grammar in use, built on first use. */
-    static FoldTable foldClasses(boolean unicodeMode) {
-        return unicodeMode ? UnicodeFoldTable.TABLE : LegacyFoldTable.TABLE;
+    /** The table of the grammar of no flag under a version of Unicode ({@link Ucd#legacyFold} keeps it). */
+    static FoldTable legacyFoldTable(Ucd ucd) {
+        Map<Integer, IntList> classes = new HashMap<>();
+        for (int r = 0; r <= 0xFFFF; r++) {
+            classes.computeIfAbsent(canonicalize(ucd, r, false), k -> new IntList()).add(r);
+        }
+        return new FoldTable(classes);
+    }
+
+    /** The table of the grammar in use for a version of Unicode, built on first use. */
+    static FoldTable foldClasses(Ucd ucd, boolean unicodeMode) {
+        return unicodeMode ? ucd.unicodeFold.get() : ucd.legacyFold.get();
     }
 
     /** The result of {@link #foldClosure}: the closed set, and the number of characters with a case variant it held. */
@@ -114,9 +120,9 @@ final class Fold {
         }
     }
 
-    /** The set of every character equivalent to some member of the set, with the work it did. */
-    static Closure foldClosure(CharSet set, boolean unicodeMode) {
-        FoldTable table = foldClasses(unicodeMode);
+    /** The set of every character equivalent to some member of the set under a version, with the work it did. */
+    static Closure foldClosure(Ucd ucd, CharSet set, boolean unicodeMode) {
+        FoldTable table = foldClasses(ucd, unicodeMode);
         IntList extra = new IntList();
         int variants = 0;
         int[] rs = set.ranges;

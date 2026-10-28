@@ -28,6 +28,11 @@ import java.util.function.Supplier;
  * {@link MatchLimitException} when a match reaches either. There is none unless {@link #compile(String, Flags,
  * Duration)} or {@link #setDefaultMatchTimeout(Duration)} gives one, so a program that matches patterns or texts from
  * outside should give its patterns one.
+ *
+ * <p>{@link #builder(String)} reads a pattern with the grammar of ECMAScript 2020 ({@link Edition#ES2020}), the
+ * grammar JSON Schema 2020-12 names, and with the tables of Unicode 13, 17 or 18 ({@link UnicodeVersion}), each chosen
+ * on its own. Both are read when the pattern is compiled, so a match costs the same whichever is chosen. Its
+ * {@link Builder#tryBuild()} and {@link #tryCompile} give a {@link CompileResult} in place of throwing.
  */
 public final class Regex {
     /** The longest pattern, in bytes of UTF-8 (a lone surrogate counts three). */
@@ -69,6 +74,9 @@ public final class Regex {
     final long timeoutNanos;
     /** The size the parser counted for the pattern. */
     final int size;
+    /** The edition of the grammar and the version of Unicode, resolved, the pattern was read with. */
+    private final Edition edition;
+    private final UnicodeVersion unicodeVersion;
     /**
      * The automaton of the pattern over ASCII text ({@link Dfa}), built on the first match that wants it; {@link
      * #NO_DFA} when the pattern has none.
@@ -77,10 +85,12 @@ public final class Regex {
 
     private static final Object NO_DFA = new Object();
 
-    private Regex(String pattern, Flags flags, long timeoutNanos, Parser.Parsed parsed) {
+    private Regex(String pattern, Flags flags, long timeoutNanos, Parser.Syntax syntax, Parser.Parsed parsed) {
         this.pattern = pattern;
         this.flags = flags;
         this.timeoutNanos = timeoutNanos;
+        this.edition = syntax.edition;
+        this.unicodeVersion = syntax.unicodeVersion.resolve();
         this.unicode = flags.unicode() || flags.unicodeSets();
         this.regular = !parsed.parser.needsBacktracking && Re2.cost(parsed.root) <= Re2.MAX_COST;
         this.size = parsed.parser.size;
@@ -98,7 +108,7 @@ public final class Regex {
     Dfa dfa() {
         Object d = dfa;
         if (d == null) {
-            Dfa built = Dfa.build(Parser.parseWith(pattern, flags.syntax()).root);
+            Dfa built = Dfa.build(Parser.parseWith(pattern, syntax()).root);
             d = built == null ? NO_DFA : built;
             dfa = d;
         }
@@ -184,14 +194,130 @@ public final class Regex {
      * {@link RegexException.Kind#TOO_LARGE} for a pattern over a limit of size, whether or not it is valid.
      */
     public static Regex compile(String pattern, Flags flags, Duration matchTimeout) {
-        Parser.Syntax syntax = flags.syntax();
+        return build(pattern, flags, matchTimeout, Edition.CURRENT, UnicodeVersion.DEFAULT);
+    }
+
+    private static Regex build(String pattern, Flags flags, Duration matchTimeout, Edition edition,
+            UnicodeVersion unicodeVersion) {
+        Parser.Syntax syntax = syntaxOf(flags, edition, unicodeVersion);
         long timeout = matchTimeout == null ? 0 : nanos(matchTimeout);
         Regex re = onADeepStack(pattern, flags.unicodeSets(),
-                () -> new Regex(pattern, flags, timeout, read(pattern, syntax)));
+                () -> new Regex(pattern, flags, timeout, syntax, read(pattern, syntax)));
         if (re == null) {
             throw RegexException.tooLarge(Limit.NESTING, MAX_NESTING);
         }
         return re;
+    }
+
+    /**
+     * The grammar of flags in an edition, under a version of Unicode. The grammar of ECMAScript 2020 has no d flag
+     * (2022) and no v flag (2024), and refuses them as flags that are not valid.
+     */
+    private static Parser.Syntax syntaxOf(Flags flags, Edition edition, UnicodeVersion unicodeVersion) {
+        if (edition == Edition.ES2020 && (flags.hasIndices() || flags.unicodeSets())) {
+            throw RegexException.flags("ecmaregex: the flags " + RegexException.quote(flags.toString())
+                    + " have d or v, which ECMAScript 2020 does not have");
+        }
+        return flags.syntax().with(edition, unicodeVersion);
+    }
+
+    /**
+     * Compiles a pattern with the flags and a match timeout ({@link Duration#ZERO} or {@code null} for none), without
+     * throwing: the {@link CompileResult} holds the {@code Regex} or why it was not compiled. A validator that compiles
+     * patterns from outside takes this form, and gives each its own timeout.
+     */
+    public static CompileResult tryCompile(String pattern, String flags, Duration matchTimeout) {
+        return builder(pattern).flags(flags).matchTimeout(matchTimeout).tryBuild();
+    }
+
+    /** A builder for the pattern, with no flags, for the settings beyond the flags (see {@link Builder}). */
+    public static Builder builder(String pattern) {
+        return new Builder(pattern);
+    }
+
+    /**
+     * Compiles a pattern with settings beyond its flags: the match timeout, the edition of ECMA-262 whose grammar it is
+     * read with and the version of Unicode whose tables it is read with, each independent of the others. What it does
+     * not set is as {@link #compile(String, Flags)} has it: the {@link #defaultMatchTimeout()}, today's grammar and
+     * V8's Unicode.
+     *
+     * <pre>{@code
+     * // ECMAScript 2020 as its edition was published, with the Unicode of its year, as JSON Schema 2020-12 reads a
+     * // pattern.
+     * CompileResult result = Regex.builder("^\\p{Script=Greek}+$")
+     *         .flags("u")
+     *         .matchTimeout(Duration.ofSeconds(1))
+     *         .edition(Edition.ES2020)
+     *         .unicodeVersion(UnicodeVersion.V13)
+     *         .tryBuild();
+     * }</pre>
+     */
+    public static final class Builder {
+        private final String pattern;
+        private Flags flags = Flags.NONE;
+        private String flagsText;
+        private boolean hasTimeout;
+        private Duration matchTimeout;
+        private Edition edition = Edition.CURRENT;
+        private UnicodeVersion unicodeVersion = UnicodeVersion.DEFAULT;
+
+        private Builder(String pattern) {
+            this.pattern = pattern;
+        }
+
+        /** The flags, as {@code new RegExp(pattern, flags)} takes them. Flags that are not valid fail the build. */
+        public Builder flags(String flags) {
+            this.flagsText = flags;
+            return this;
+        }
+
+        /** The flags, already read. */
+        public Builder flags(Flags flags) {
+            this.flags = flags;
+            this.flagsText = null;
+            return this;
+        }
+
+        /**
+         * The match timeout (see {@link Regex#compile(String, Flags, Duration)}): {@link Duration#ZERO} or {@code null}
+         * for no limit. Without it the pattern takes the {@link Regex#defaultMatchTimeout()}.
+         */
+        public Builder matchTimeout(Duration matchTimeout) {
+            this.hasTimeout = true;
+            this.matchTimeout = matchTimeout;
+            return this;
+        }
+
+        /** The edition of ECMA-262 whose grammar the pattern is read with. */
+        public Builder edition(Edition edition) {
+            this.edition = edition == null ? Edition.CURRENT : edition;
+            return this;
+        }
+
+        /** The version of Unicode whose tables the pattern is read with. */
+        public Builder unicodeVersion(UnicodeVersion unicodeVersion) {
+            this.unicodeVersion = unicodeVersion == null ? UnicodeVersion.DEFAULT : unicodeVersion;
+            return this;
+        }
+
+        /**
+         * Compiles the pattern, with the exceptions of {@link Regex#compile(String, Flags, Duration)}. Under
+         * {@link Edition#ES2020} the d and v flags are a {@link RegexException} of kind {@code FLAGS}.
+         */
+        public Regex build() {
+            Flags f = flagsText == null ? flags : Flags.parse(flagsText);
+            Duration timeout = hasTimeout ? matchTimeout : Duration.ofNanos(defaultTimeoutNanos);
+            return Regex.build(pattern, f, timeout, edition, unicodeVersion);
+        }
+
+        /** Compiles the pattern as {@link #build()} does, giving why it was not compiled in place of throwing. */
+        public CompileResult tryBuild() {
+            try {
+                return CompileResult.ok(build());
+            } catch (RegexException e) {
+                return CompileResult.failed(e);
+            }
+        }
     }
 
     /** Whether the pattern is valid with the flags, without compiling it. */
@@ -202,9 +328,23 @@ public final class Regex {
         } catch (RegexException e) {
             return false;
         }
-        Boolean valid = onADeepStack(pattern, f.unicodeSets(), () -> {
+        return isValid(pattern, f, Edition.CURRENT, UnicodeVersion.DEFAULT);
+    }
+
+    /**
+     * Whether the pattern is valid with the flags in the grammar of an edition and under a version of Unicode, without
+     * compiling it.
+     */
+    public static boolean isValid(String pattern, Flags flags, Edition edition, UnicodeVersion unicodeVersion) {
+        Parser.Syntax syntax;
+        try {
+            syntax = syntaxOf(flags, edition, unicodeVersion);
+        } catch (RegexException e) {
+            return false;
+        }
+        Boolean valid = onADeepStack(pattern, flags.unicodeSets(), () -> {
             try {
-                Parser.parseWith(pattern, f.syntax());
+                Parser.parseWith(pattern, syntax);
                 return true;
             } catch (ParseFailure e) {
                 return false;
@@ -302,7 +442,7 @@ public final class Regex {
                 c = caps;
                 if (c == null) {
                     Supplier<Program> build = () -> Compiler.compileProgram(
-                            Parser.parseWith(pattern, flags.syntax()).root, unicode, info.groups);
+                            Parser.parseWith(pattern, syntax()).root, unicode, info.groups);
                     c = shallow(pattern, flags.unicodeSets()) ? build.get() : deep(build);
                     if (c == null) {
                         throw new IllegalStateException("no thread could be started to read a deep pattern");
@@ -359,6 +499,24 @@ public final class Regex {
     /** The flags of the pattern. */
     public Flags flags() {
         return flags;
+    }
+
+    /** The edition of ECMA-262 whose grammar the pattern was read with (see {@link Builder#edition}). */
+    public Edition edition() {
+        return edition;
+    }
+
+    /**
+     * The version of Unicode whose tables the pattern was read with, resolved: never {@link UnicodeVersion#DEFAULT} or
+     * {@link UnicodeVersion#LATEST} (see {@link Builder#unicodeVersion}).
+     */
+    public UnicodeVersion unicodeVersion() {
+        return unicodeVersion;
+    }
+
+    /** The grammar the pattern was read with, to read it again. */
+    private Parser.Syntax syntax() {
+        return flags.syntax().with(edition, unicodeVersion);
     }
 
     /**

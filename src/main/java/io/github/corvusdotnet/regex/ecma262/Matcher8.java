@@ -1061,7 +1061,7 @@ final class Matcher8 {
                         int got = Utf8.read(input, at, units);
                         at += got & 7;
                         ok = got >> 3 == want >> 3 || i.op == Inst.BACKREF_FOLD
-                                && Fold.canonicalize(got >> 3, i.flag) == Fold.canonicalize(want >> 3, i.flag);
+                                && Fold.equalIgnoringCase(i.b, got >> 3, want >> 3, i.flag);
                     }
                     if (ok) {
                         pos = at;
@@ -1092,7 +1092,7 @@ final class Matcher8 {
                         int got = Utf8.readLast(input, at, units);
                         at -= got & 7;
                         ok = got >> 3 == want >> 3 || i.op == Inst.BACKREF_FOLD_BACK
-                                && Fold.canonicalize(got >> 3, i.flag) == Fold.canonicalize(want >> 3, i.flag);
+                                && Fold.equalIgnoringCase(i.b, got >> 3, want >> 3, i.flag);
                     }
                     if (ok) {
                         pos = at;

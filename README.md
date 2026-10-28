@@ -7,8 +7,14 @@ Regular expressions with the grammar and the answers of ECMA-262, the `RegExp` o
   `v` flag has nested classes, the difference and the intersection of classes, strings in a class and the seven
   properties of strings.
 - ECMAScript 2025: lookbehind, named groups (and a name shared between alternatives), modifier groups such as
-  `(?i:...)`, and every Unicode property ECMA-262 lists, from tables of Unicode 17 the library carries, so a pattern
+  `(?i:...)`, and every Unicode property ECMA-262 lists, from tables of Unicode the library carries, so a pattern
   answers the same whatever JDK runs it.
+- The grammar of ECMAScript 2020, which JSON Schema 2020-12 names, and a choice of Unicode version, each independent
+  of the other: `Regex.builder(pattern)` takes an `Edition` (`CURRENT`, the default, or `ES2020`) and a
+  `UnicodeVersion` (`DEFAULT` for V8's version, which is 17 today, or `V13`, `V17`, `V18` or `LATEST`, which is 18
+  today). Both are settled when a pattern is compiled and cost a match nothing. The 2020 grammar refuses what later
+  editions added: the `d` and `v` flags, modifier groups, a group name used twice, and property names outside its
+  tables. A version's tables load when a pattern first asks for it.
 - Text as a `String` (UTF-16, lone surrogates and all) or as UTF-8 bytes (`Utf8Text`, checked once, or a `byte[]`,
   checked on each call). Nothing is transcoded, and a match allocates nothing once the thread's working memory has
   grown.
@@ -18,7 +24,9 @@ Regular expressions with the grammar and the answers of ECMA-262, the `RegExp` o
   given a match timeout, as a `Regex` of .NET can, which bounds the time and the backtracking memory of every match,
   and a pattern has limits of size, so with a timeout neither a pattern nor a text from outside can make a program
   hang. `Regex.setDefaultMatchTimeout`, or the system property `corvus.regex.defaultMatchTimeout`, gives every
-  pattern one.
+  pattern one. `Regex.tryCompile(pattern, flags, timeout)` and the builder's `tryBuild()` give a pattern its own and
+  return a `CompileResult` (the `Regex`, or the `RegexException` of why not) in place of throwing, so a validator
+  needs neither the default nor a catch.
 
 - Two modes of searching for where a match can start. By default the library's own searches, which read a text
   eight bytes at a time and need nothing of the JVM. Started with `--add-modules jdk.incubator.vector`, the JVM gives
@@ -30,21 +38,34 @@ Regular expressions with the grammar and the answers of ECMA-262, the `RegExp` o
 **Compliance.** Over the [ECMA-262 test data](https://github.com/corvus-dotnet/ecma262-regex-test-data) (what V8 says
 about its patterns and texts, test262's patterns and `exec` calls, the global search, `replace` and `split` among them,
 and texts of bytes that are not UTF-8, which it refuses), the library gives every answer right and none wrong,
-refuses no valid pattern, accepts no invalid one and reaches no limit, over UTF-8 and over UTF-16. CI runs the whole
-data on every change.
+refuses no valid pattern, accepts no invalid one and reaches no limit, over UTF-8 and over UTF-16. It does the same on
+the data as the data's own scripts write it for Unicode 13 and 18 and for the grammar of ECMAScript 2020. CI runs all
+of it on every change.
 
 It is a port of the Rust crate [corvus-regex-ecma262](https://github.com/corvus-dotnet/corvus-regex-ecma262-rs) at
 v0.1.3, with the crate's search layer (`docs/port-checklist.md`), and it follows the design of the .NET engine
 [Corvus.Regex.Ecma262](https://github.com/corvus-dotnet/Corvus.Regex.Ecma262).
 
 ```java
+import io.github.corvusdotnet.regex.ecma262.CompileResult;
+import io.github.corvusdotnet.regex.ecma262.Edition;
 import io.github.corvusdotnet.regex.ecma262.Regex;
+import io.github.corvusdotnet.regex.ecma262.UnicodeVersion;
 import java.time.Duration;
 
 Regex re = Regex.compile("(?<year>\\d{4})-(?<month>\\d{2})", "u", Duration.ofMillis(100));
 re.isMatch("on 2026-10-22");                              // true
 re.captures("on 2026-10-22").group("month");             // "10"
 re.replaceAll("2026-10-22", "$<month>/$<year>");          // "10/2026-22"
+
+// ECMAScript 2020 as its edition was published, with the Unicode of its year, and a match timeout of its own.
+CompileResult greek = Regex.builder("^\\p{Script=Greek}+$")
+        .flags("u")
+        .matchTimeout(Duration.ofSeconds(1))
+        .edition(Edition.ES2020)
+        .unicodeVersion(UnicodeVersion.V13)
+        .tryBuild();
+greek.isOk();                                             // true
 ```
 
 ## Installing
@@ -102,7 +123,9 @@ JDK 25 and Maven 3.9: `mvn verify` builds the library for Java 17 with warnings 
 compile against the incubating module, whose warning only JDK 25's javac can leave out) and runs the tests in both
 modes. The templates of
 `src/template` are expanded into one class per encoding by `python3 tools/expand.py` (the expanded files are checked
-in, and CI runs it with `--check`). The test data runs with
+in, and CI runs it with `--check`). The Unicode tables of each version (`Tables<major>.java`, `Strings<major>.java`)
+and the property names of ECMAScript 2020 (`Es2020.java`) are written from the Rust crate's by `tools/unicode`, and
+CI checks them against the crate. The test data runs with
 
 ```sh
 javac -encoding UTF-8 -d tools/dataset/out -cp target/classes tools/dataset/Dataset.java

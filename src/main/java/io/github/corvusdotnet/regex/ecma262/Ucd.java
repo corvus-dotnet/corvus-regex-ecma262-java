@@ -1,19 +1,25 @@
 package io.github.corvusdotnet.regex.ecma262;
 
 import java.util.Arrays;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
- * The Unicode Character Database properties the engine reads, for one fixed version of Unicode ({@code ucd.rs}, the
- * {@code ucd} package of the Go module).
+ * The Unicode Character Database properties the engine reads, for each version of Unicode the library carries
+ * ({@code ucd.rs}, one instance of the {@code ucd} package of the Go module for each version): {@link #v13()},
+ * {@link #v17()} and {@link #v18()}.
  *
  * <p>Nothing in the engine takes Unicode properties from the Java platform, whose tables follow the JDK. With its own
  * tables the library gives the same answers whatever runs it, and the answers change only when the tables are
- * generated again. {@link TablesGen#VERSION} names the version of Unicode they hold. A value that follows from other
- * values (a General_Category group such as L, the Assigned property, the Unknown script) has no table of its own and
- * is built when it is first asked for.
+ * generated again. A pattern is read with the tables of the version it was compiled for. The tables of a version are
+ * in {@code Tables<major>.java} and its properties of strings in {@code Strings<major>.java}; a version's classes load
+ * when a pattern first asks for it. A value that follows from other values (a General_Category group such as L, the
+ * Assigned property, the Unknown script) has no table of its own and is built when it is first asked for, and so is
+ * everything else here that is built from the tables: the case folding classes, the property sets and the properties
+ * of strings.
  */
 final class Ucd {
-    private Ucd() {}
 
     /** The last Unicode code point. */
     static final int MAX_RUNE = 0x10FFFF;
@@ -68,135 +74,222 @@ final class Ucd {
         return inverse.toArray();
     }
 
-    // The General_Category values that are groups of other values, the Assigned property and the Unknown script. Each
-    // is built on first use and kept, a holder class each.
-    private static final class Letter {
-        static final int[] PAIRS =
-                union(TablesGen.GC_LU, TablesGen.GC_LL, TablesGen.GC_LT, TablesGen.GC_LM, TablesGen.GC_LO);
+    /** A value built on first use and then kept. */
+    static final class Lazy<T> {
+        private final Supplier<T> make;
+        private volatile T value;
+
+        Lazy(Supplier<T> make) {
+            this.make = make;
+        }
+
+        T get() {
+            T v = value;
+            if (v == null) {
+                synchronized (this) {
+                    v = value;
+                    if (v == null) {
+                        v = make.get();
+                        value = v;
+                    }
+                }
+            }
+            return v;
+        }
     }
 
-    private static final class CasedLetter {
-        static final int[] PAIRS = union(TablesGen.GC_LU, TablesGen.GC_LL, TablesGen.GC_LT);
+    /** The version of Unicode the tables hold, such as "17.0.0", and its major number. */
+    final String version;
+    final int major;
+    private final Function<String, Table> categoryTable;
+    private final Function<String, Table> binaryTable;
+    private final Function<String, Table> scriptTable;
+    private final Function<String, Table> scriptExtensionsTable;
+    private final int[] caseFolds;
+    private final int[] upperCases;
+    /** The properties of strings of the v flag ({@code Strings<major>.java}). */
+    final String[][] strings;
+
+    // The General_Category values that are groups of other values, the Assigned property (the code points that have a
+    // General_Category other than Cn) and the Unknown script (the code points that belong to no script: the
+    // unassigned, private use and surrogate code points).
+    private final Lazy<int[]> letter = new Lazy<>(() -> union(gc("Lu"), gc("Ll"), gc("Lt"), gc("Lm"), gc("Lo")));
+    private final Lazy<int[]> casedLetter = new Lazy<>(() -> union(gc("Lu"), gc("Ll"), gc("Lt")));
+    private final Lazy<int[]> mark = new Lazy<>(() -> union(gc("Mn"), gc("Mc"), gc("Me")));
+    private final Lazy<int[]> numberGroup = new Lazy<>(() -> union(gc("Nd"), gc("Nl"), gc("No")));
+    private final Lazy<int[]> punctuation =
+            new Lazy<>(() -> union(gc("Pc"), gc("Pd"), gc("Ps"), gc("Pe"), gc("Pi"), gc("Pf"), gc("Po")));
+    private final Lazy<int[]> symbol = new Lazy<>(() -> union(gc("Sm"), gc("Sc"), gc("Sk"), gc("So")));
+    private final Lazy<int[]> separator = new Lazy<>(() -> union(gc("Zs"), gc("Zl"), gc("Zp")));
+    private final Lazy<int[]> other = new Lazy<>(() -> union(gc("Cc"), gc("Cf"), gc("Cs"), gc("Co"), gc("Cn")));
+    private final Lazy<int[]> assigned = new Lazy<>(() -> complement(gc("Cn")));
+    private final Lazy<int[]> unknownScript = new Lazy<>(() -> union(gc("Cn"), gc("Co"), gc("Cs")));
+
+    /** The tables a group name is read with ({@code Parser}). */
+    final Lazy<Table> idStart = new Lazy<>(() -> binaryTable("ID_Start"));
+    final Lazy<Table> idContinue = new Lazy<>(() -> binaryTable("ID_Continue"));
+    /** The classes of Canonicalize under the u flag's grammar and under the grammar of no flag ({@link Fold}). */
+    final Lazy<Fold.FoldTable> unicodeFold = new Lazy<>(() -> Fold.unicodeFoldTable(this));
+    final Lazy<Fold.FoldTable> legacyFold = new Lazy<>(() -> Fold.legacyFoldTable(this));
+    /** The properties of strings, read from {@link #strings} ({@link CharSet}). */
+    final Lazy<CharSet.StringProperty[]> stringProperties;
+    /**
+     * The sets already built for property expressions ({@link CharSet#propertySet}). Only an expression ECMA-262
+     * defines is kept, and those are a fixed few hundred, so the cache is bounded.
+     */
+    final ConcurrentHashMap<String, CharSet> propertyCache = new ConcurrentHashMap<>();
+
+    private Ucd(String version, Function<String, Table> categoryTable, Function<String, Table> binaryTable,
+            Function<String, Table> scriptTable, Function<String, Table> scriptExtensionsTable, int[] caseFolds,
+            int[] upperCases, String[][] strings) {
+        this.version = version;
+        this.major = Integer.parseInt(version.substring(0, version.indexOf('.')));
+        this.categoryTable = categoryTable;
+        this.binaryTable = binaryTable;
+        this.scriptTable = scriptTable;
+        this.scriptExtensionsTable = scriptExtensionsTable;
+        this.caseFolds = caseFolds;
+        this.upperCases = upperCases;
+        this.strings = strings;
+        this.stringProperties = new Lazy<>(() -> CharSet.readStringProperties(strings));
     }
 
-    private static final class Mark {
-        static final int[] PAIRS = union(TablesGen.GC_MN, TablesGen.GC_MC, TablesGen.GC_ME);
+    // A holder class for each version, so that a version's tables load when it is first asked for.
+    private static final class V13 {
+        static final Ucd UCD = new Ucd(Tables13.VERSION, Tables13::categoryTable, Tables13::binaryTable,
+                Tables13::scriptTable, Tables13::scriptExtensionsTable, Tables13.CASE_FOLDS, Tables13.UPPER_CASES,
+                Strings13.PROPERTIES);
     }
 
-    private static final class NumberGroup {
-        static final int[] PAIRS = union(TablesGen.GC_ND, TablesGen.GC_NL, TablesGen.GC_NO);
+    private static final class V17 {
+        static final Ucd UCD = new Ucd(Tables17.VERSION, Tables17::categoryTable, Tables17::binaryTable,
+                Tables17::scriptTable, Tables17::scriptExtensionsTable, Tables17.CASE_FOLDS, Tables17.UPPER_CASES,
+                Strings17.PROPERTIES);
     }
 
-    private static final class Punctuation {
-        static final int[] PAIRS = union(TablesGen.GC_PC, TablesGen.GC_PD, TablesGen.GC_PS, TablesGen.GC_PE,
-                TablesGen.GC_PI, TablesGen.GC_PF, TablesGen.GC_PO);
+    private static final class V18 {
+        static final Ucd UCD = new Ucd(Tables18.VERSION, Tables18::categoryTable, Tables18::binaryTable,
+                Tables18::scriptTable, Tables18::scriptExtensionsTable, Tables18.CASE_FOLDS, Tables18.UPPER_CASES,
+                Strings18.PROPERTIES);
     }
 
-    private static final class Symbol {
-        static final int[] PAIRS = union(TablesGen.GC_SM, TablesGen.GC_SC, TablesGen.GC_SK, TablesGen.GC_SO);
+    /** Unicode 13.0. */
+    static Ucd v13() {
+        return V13.UCD;
     }
 
-    private static final class Separator {
-        static final int[] PAIRS = union(TablesGen.GC_ZS, TablesGen.GC_ZL, TablesGen.GC_ZP);
+    /** Unicode 17.0. */
+    static Ucd v17() {
+        return V17.UCD;
     }
 
-    private static final class Other {
-        static final int[] PAIRS =
-                union(TablesGen.GC_CC, TablesGen.GC_CF, TablesGen.GC_CS, TablesGen.GC_CO, TablesGen.GC_CN);
+    /** Unicode 18.0. */
+    static Ucd v18() {
+        return V18.UCD;
     }
 
-    /** The code points that have a General_Category other than Cn. */
-    private static final class Assigned {
-        static final int[] PAIRS = complement(TablesGen.GC_CN);
+    /**
+     * The Unicode of a version by its major number: 13, 17 or 18. A backreference carries the number of the version it
+     * folds case with ({@code Compiler}), which is never another.
+     */
+    static Ucd byMajor(int major) {
+        switch (major) {
+            case 13:
+                return v13();
+            case 18:
+                return v18();
+            default:
+                return v17();
+        }
     }
 
-    /** The code points that belong to no script: the unassigned, private use and surrogate code points. */
-    private static final class UnknownScript {
-        static final int[] PAIRS = union(TablesGen.GC_CN, TablesGen.GC_CO, TablesGen.GC_CS);
+    /** The generated table of a General_Category value that is not a group. */
+    private Table gc(String name) {
+        return categoryTable.apply(name);
     }
 
     /**
      * The table of the General_Category value by its short name, such as "Lu" or "L", as inclusive pairs (a copy the
      * caller may change). {@code null} for any other name.
      */
-    static int[] category(String name) {
-        int[] built;
+    int[] category(String name) {
+        Lazy<int[]> built;
         switch (name) {
             case "L":
-                built = Letter.PAIRS;
+                built = letter;
                 break;
             case "LC":
-                built = CasedLetter.PAIRS;
+                built = casedLetter;
                 break;
             case "M":
-                built = Mark.PAIRS;
+                built = mark;
                 break;
             case "N":
-                built = NumberGroup.PAIRS;
+                built = numberGroup;
                 break;
             case "P":
-                built = Punctuation.PAIRS;
+                built = punctuation;
                 break;
             case "S":
-                built = Symbol.PAIRS;
+                built = symbol;
                 break;
             case "Z":
-                built = Separator.PAIRS;
+                built = separator;
                 break;
             case "C":
-                built = Other.PAIRS;
+                built = other;
                 break;
             default:
-                Table t = TablesGen.categoryTable(name);
+                Table t = categoryTable.apply(name);
                 return t == null ? null : t.ranges();
         }
-        return built.clone();
+        return built.get().clone();
     }
 
     /**
      * The table of a binary property by its canonical name, such as "Alphabetic", as inclusive pairs. {@code null} for
      * any other name. ASCII and Any, which ECMA-262 adds to the properties of Unicode, are not here.
      */
-    static int[] binary(String name) {
+    int[] binary(String name) {
         if (name.equals("Assigned")) {
-            return Assigned.PAIRS.clone();
+            return assigned.get().clone();
         }
-        Table t = TablesGen.binaryTable(name);
+        Table t = binaryTable.apply(name);
         return t == null ? null : t.ranges();
     }
 
     /** The generated table of a binary property, for the callers that test one code point. */
-    static Table binaryTable(String name) {
-        return TablesGen.binaryTable(name);
+    Table binaryTable(String name) {
+        return binaryTable.apply(name);
     }
 
     /** The table of a Script value by its long name or an alias, such as "Greek" or "Grek". */
-    static int[] script(String name) {
+    int[] script(String name) {
         switch (name) {
             case "Unknown":
             case "Zzzz":
-                return UnknownScript.PAIRS.clone();
+                return unknownScript.get().clone();
             case "Katakana_Or_Hiragana":
             case "Hrkt":
                 // PropertyValueAliases.txt lists the value, and no code point has it.
                 return new int[0];
             default:
-                Table t = TablesGen.scriptTable(name);
+                Table t = scriptTable.apply(name);
                 return t == null ? null : t.ranges();
         }
     }
 
     /** The table of a Script_Extensions value by the long name of the script or an alias. */
-    static int[] scriptExtensions(String name) {
+    int[] scriptExtensions(String name) {
         switch (name) {
             case "Unknown":
             case "Zzzz":
-                return UnknownScript.PAIRS.clone();
+                return unknownScript.get().clone();
             case "Katakana_Or_Hiragana":
             case "Hrkt":
                 return new int[0];
             default:
-                Table t = TablesGen.scriptExtensionsTable(name);
+                Table t = scriptExtensionsTable.apply(name);
                 return t == null ? null : t.ranges();
         }
     }
@@ -231,25 +324,25 @@ final class Ucd {
      * The simple case folding of a code point (the C and S rows of CaseFolding.txt), which is the code point itself
      * when it has none.
      */
-    static int fold(int r) {
+    int fold(int r) {
         if (r < 0x80) {
             return r >= 'A' && r <= 'Z' ? r + ('a' - 'A') : r;
         }
-        return mapCase(TablesGen.CASE_FOLDS, r);
+        return mapCase(caseFolds, r);
     }
 
     /** The simple uppercase mapping of a code point, which is the code point itself when it has none. */
-    static int toUpper(int r) {
+    int toUpper(int r) {
         if (r < 0x80) {
             return r >= 'a' && r <= 'z' ? r - ('a' - 'A') : r;
         }
-        return mapCase(TablesGen.UPPER_CASES, r);
+        return mapCase(upperCases, r);
     }
 
     /** Every code point that {@link #fold} changes, in ascending order. */
-    static int[] folding() {
+    int[] folding() {
         IntList dst = new IntList();
-        int[] t = TablesGen.CASE_FOLDS;
+        int[] t = caseFolds;
         for (int i = 0; i < t.length; i += 4) {
             for (int offset = 0; offset < t[i + 2]; offset++) {
                 if ((offset & t[i + 3]) == 0 && t[i + 1] != 0) {

@@ -44,13 +44,29 @@ final class Parser {
         final boolean icase;
         final boolean multiline;
         final boolean dotAll;
+        /** The edition of ECMA-262 whose grammar the pattern is read with. */
+        final Edition edition;
+        /** The version of Unicode whose tables the pattern is read with. */
+        final UnicodeVersion unicodeVersion;
 
         Syntax(boolean unicode, boolean sets, boolean icase, boolean multiline, boolean dotAll) {
+            this(unicode, sets, icase, multiline, dotAll, Edition.CURRENT, UnicodeVersion.DEFAULT);
+        }
+
+        Syntax(boolean unicode, boolean sets, boolean icase, boolean multiline, boolean dotAll, Edition edition,
+                UnicodeVersion unicodeVersion) {
             this.unicode = unicode;
             this.sets = sets;
             this.icase = icase;
             this.multiline = multiline;
             this.dotAll = dotAll;
+            this.edition = edition;
+            this.unicodeVersion = unicodeVersion;
+        }
+
+        /** The same grammar and flags, read with an edition and a version of Unicode. */
+        Syntax with(Edition edition, UnicodeVersion unicodeVersion) {
+            return new Syntax(unicode, sets, icase, multiline, dotAll, edition, unicodeVersion);
         }
     }
 
@@ -73,6 +89,10 @@ final class Parser {
     private final boolean sets;
     /** The sequences of the property of strings the last class escape named (the v flag), or {@code null}. */
     private List<int[]> escapeStrings;
+    /** The Unicode of the version the pattern is read with. */
+    private final Ucd ucd;
+    /** The grammar of ECMAScript 2020, which refuses what later editions added. */
+    private final boolean es2020;
     private int depth;
     /**
      * {@code groupCount} and {@code hasNames} come from a scan of the whole pattern before parsing, because the
@@ -107,6 +127,8 @@ final class Parser {
         this.p = p;
         this.unicode = syntax.unicode;
         this.sets = syntax.sets;
+        this.ucd = syntax.unicodeVersion.ucd();
+        this.es2020 = syntax.edition == Edition.ES2020;
         this.icase = syntax.icase;
         this.multiline = syntax.multiline;
         this.dotAll = syntax.dotAll;
@@ -239,11 +261,6 @@ final class Parser {
 
     private static boolean oneOf(int c, String chars) {
         return c >= 0 && c < 0x80 && chars.indexOf(c) >= 0;
-    }
-
-    private static final class IdTables {
-        static final Table ID_START = Ucd.binaryTable("ID_Start");
-        static final Table ID_CONTINUE = Ucd.binaryTable("ID_Continue");
     }
 
     private static void appendClassAtom(IntList pairs, int c, CharSet set) {
@@ -398,7 +415,7 @@ final class Parser {
      */
     private Node charNode(int c) {
         if (icase) {
-            CharSet set = Fold.foldClosure(CharSet.of(new int[] {c, c}, false), unicode).set;
+            CharSet set = Fold.foldClosure(ucd, CharSet.of(new int[] {c, c}, false), unicode).set;
             if (set.ranges.length != 2 || set.ranges[0] != set.ranges[1]) {
                 return Node.ofSet(set);
             }
@@ -416,7 +433,7 @@ final class Parser {
      * set: a byte for each character with a case variant that the set holds, and its ranges.
      */
     private CharSet fold(CharSet set) {
-        Fold.Closure closed = Fold.foldClosure(set, unicode);
+        Fold.Closure closed = Fold.foldClosure(ucd, set, unicode);
         charge(closed.variants + (long) RANGE_SIZE * closed.set.ranges.length / 2);
         return closed.set;
     }
@@ -616,7 +633,8 @@ final class Parser {
             return Node.withSub(Node.Kind.GROUP, body);
         }
         int c = peek();
-        if (c == 'i' || c == 'm' || c == 's' || c == '-') {
+        // Modifier groups came in ECMAScript 2025, so the 2020 grammar reads (?i as an invalid group.
+        if ((c == 'i' || c == 'm' || c == 's' || c == '-') && !es2020) {
             Node g = modifierGroup();
             quantifiable = true;
             return g;
@@ -649,6 +667,10 @@ final class Parser {
             // match can go through both.
             List<NamedGroup> others = names.get(name);
             if (others != null) {
+                // The 2020 grammar refuses a name used twice, wherever the groups are.
+                if (es2020) {
+                    throw fail("duplicate group name");
+                }
                 for (NamedGroup other : others) {
                     if (!separateAlternatives(other.path, path)) {
                         throw fail("duplicate group name");
@@ -755,10 +777,10 @@ final class Parser {
                 i++;
             }
             if (name.isEmpty()) {
-                if (!(c == '$' || c == '_' || IdTables.ID_START.contains(c))) {
+                if (!(c == '$' || c == '_' || ucd.idStart.get().contains(c))) {
                     throw fail("invalid group name");
                 }
-            } else if (!(c == '$' || c == 0x200C || c == 0x200D || IdTables.ID_CONTINUE.contains(c))) {
+            } else if (!(c == '$' || c == 0x200C || c == 0x200D || ucd.idContinue.get().contains(c))) {
                 throw fail("invalid group name");
             }
             name.add(c);
@@ -801,6 +823,7 @@ final class Parser {
                 Node ref = new Node(Node.Kind.BACKREF);
                 ref.name = name;
                 ref.fold = icase;
+                ref.foldVersion = ucd.major;
                 return ref;
             }
             i++;
@@ -814,6 +837,7 @@ final class Parser {
                 Node ref = new Node(Node.Kind.BACKREF);
                 ref.groups.add((int) n);
                 ref.fold = icase;
+                ref.foldVersion = ucd.major;
                 return ref;
             }
             if (unicode) {
@@ -905,9 +929,10 @@ final class Parser {
                 if (!eat('}')) {
                     throw fail("invalid property name");
                 }
-                CharSet property = CharSet.propertySet(expr);
+                // The 2020 grammar knows only the names and values of its own tables, whatever the version of Unicode.
+                CharSet property = !es2020 || Es2020.hasProperty(expr) ? CharSet.propertySet(ucd, expr) : null;
                 if (property == null) {
-                    CharSet.StringProperty strings = sets && c == 'p' ? CharSet.stringProperty(expr) : null;
+                    CharSet.StringProperty strings = sets && c == 'p' ? CharSet.stringProperty(ucd, expr) : null;
                     if (strings != null) {
                         // A property of strings, which the v flag alone names, and which has no complement.
                         charge((long) RANGE_SIZE * (strings.set.ranges.length / 2 + strings.strings.size()));
@@ -1393,7 +1418,7 @@ final class Parser {
     private IntList canonicalString(int[] codePoints) {
         IntList out = new IntList(codePoints.length);
         for (int c : codePoints) {
-            out.add(icase ? Fold.canonicalize(c, true) : c);
+            out.add(icase ? Fold.canonicalize(ucd, c, true) : c);
         }
         return out;
     }

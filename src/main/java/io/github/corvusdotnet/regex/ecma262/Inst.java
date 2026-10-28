@@ -64,7 +64,10 @@ final class Inst {
     /** Jump targets. */
     int x;
     int y;
-    /** A group, a loop or a range of groups, depending on the instruction. */
+    /**
+     * A group, a loop or a range of groups, depending on the instruction. For a backreference {@code b} is the major
+     * number of the version of Unicode whose case folding it matches with.
+     */
     int a;
     int b;
     /** Bounds of a repetition. A max of -1 is no bound. */

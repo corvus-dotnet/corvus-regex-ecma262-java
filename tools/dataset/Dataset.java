@@ -1,8 +1,10 @@
 import io.github.corvusdotnet.regex.ecma262.Captures;
+import io.github.corvusdotnet.regex.ecma262.Edition;
 import io.github.corvusdotnet.regex.ecma262.Match;
 import io.github.corvusdotnet.regex.ecma262.MatchLimitException;
 import io.github.corvusdotnet.regex.ecma262.Regex;
 import io.github.corvusdotnet.regex.ecma262.RegexException;
+import io.github.corvusdotnet.regex.ecma262.UnicodeVersion;
 import io.github.corvusdotnet.regex.ecma262.Utf8Text;
 
 import java.io.IOException;
@@ -29,7 +31,7 @@ import java.util.stream.Stream;
  *
  * <pre>
  *   java -cp target/classes:tools/dataset/out Dataset &lt;data directory&gt; &lt;wrong-cases output file&gt; [file filter] [utf16|utf8|both]
- *        [--compliance &lt;file&gt;]
+ *        [--compliance &lt;file&gt;] [--edition current|es2020] [--unicode 13|17|18|latest]
  * </pre>
  *
  * Each record is asked about under each grammar V8 found it valid in: the record's flags with u added (the
@@ -45,6 +47,10 @@ import java.util.stream.Stream;
  * exec with the record's flags from its lastIndex, right when the positions of the match and of every group, the named
  * groups and, with g or y, the lastIndex after are V8's; one answer over UTF-16 and, when the text holds no lone
  * surrogate and lastIndex is not between the halves of a pair, one over UTF-8 with positions in bytes.
+ *
+ * <p>With {@code --edition} and {@code --unicode} the engine reads every pattern with that edition's grammar and that
+ * version's tables, and the data is the data as {@code node edition.js apply} or {@code node unicode.js apply} writes
+ * it for them.
  *
  * <p>With {@code --compliance <file>}, the engine's compliance object is written to the file, as the benchmark page
  * reads it (docs/implementing-a-source.md in corvus-regex-ecma262-benchmarks): the counts, this runner and the calls it
@@ -72,18 +78,62 @@ public final class Dataset {
         }
     }
 
+    /** The edition and the version of Unicode the engine reads every pattern with ({@code --edition}, {@code --unicode}). */
+    static Edition edition = Edition.CURRENT;
+    static UnicodeVersion unicodeVersion = UnicodeVersion.DEFAULT;
+
+    /** The engine's regular expression of a pattern and flags, with the settings of the run. */
+    static Regex compile(String pattern, String flags) {
+        return Regex.builder(pattern).flags(flags).edition(edition).unicodeVersion(unicodeVersion).build();
+    }
+
+    /** The value after an option, taken out of the arguments with the option; {@code null} when it is not there. */
+    static String take(List<String> rest, String name) {
+        int at = rest.indexOf(name);
+        if (at < 0) {
+            return null;
+        }
+        String value = rest.get(at + 1);
+        rest.subList(at, at + 2).clear();
+        return value;
+    }
+
     static boolean utf16;
     static boolean utf8;
 
     public static void main(String[] args) throws Exception {
-        String compliance = null;
         List<String> rest = new ArrayList<>(List.of(args));
-        int at = rest.indexOf("--compliance");
-        if (at >= 0) {
-            compliance = rest.get(at + 1);
-            rest.subList(at, at + 2).clear();
-            args = rest.toArray(new String[0]);
+        String compliance = take(rest, "--compliance");
+        String ed = take(rest, "--edition");
+        if (ed != null && !ed.equals("current")) {
+            if (!ed.equals("es2020")) {
+                throw new IllegalArgumentException("the edition is current or es2020, not " + ed);
+            }
+            edition = Edition.ES2020;
         }
+        String v = take(rest, "--unicode");
+        if (v != null) {
+            switch (v) {
+                case "13":
+                case "13.0":
+                    unicodeVersion = UnicodeVersion.V13;
+                    break;
+                case "17":
+                case "17.0":
+                    unicodeVersion = UnicodeVersion.V17;
+                    break;
+                case "18":
+                case "18.0":
+                    unicodeVersion = UnicodeVersion.V18;
+                    break;
+                case "latest":
+                    unicodeVersion = UnicodeVersion.LATEST;
+                    break;
+                default:
+                    throw new IllegalArgumentException("the Unicode version is 13, 17, 18 or latest, not " + v);
+            }
+        }
+        args = rest.toArray(new String[0]);
         Path directory = Paths.get(args[0]);
         Path wrongPath = Paths.get(args[1]);
         String filter = args.length > 2 ? args[2] : "*.jsonl";
@@ -312,7 +362,7 @@ public final class Dataset {
             String head = name + "\t/" + shown + "/" + modeFlags;
             Regex re;
             try {
-                re = Regex.compile(pattern, modeFlags);
+                re = compile(pattern, modeFlags);
             } catch (Throwable e) {
                 if (!(e instanceof RegexException)) {
                     counts.errors.incrementAndGet();
@@ -376,14 +426,11 @@ public final class Dataset {
             boolean expectedValid = (Boolean) mode[2];
             Regex re;
             try {
-                re = Regex.compile(pattern, modeFlags);
+                re = compile(pattern, modeFlags);
             } catch (RegexException e) {
-                boolean error = e.kind() == RegexException.Kind.FLAGS;
+                // The flags of a grammar the edition does not have (the v flag of ECMAScript 2020) are a refusal.
                 String message = (e.kind() == RegexException.Kind.INVALID ? "PARSE: "
-                        : e.kind() == RegexException.Kind.TOO_LARGE ? "TOO-LARGE: " : "ERROR: ") + e.getMessage();
-                if (error) {
-                    counts.errors.incrementAndGet();
-                }
+                        : e.kind() == RegexException.Kind.TOO_LARGE ? "TOO-LARGE: " : "FLAGS: ") + e.getMessage();
                 if (expectedValid) {
                     counts.refused.incrementAndGet();
                     wrong.add("REFUSED\t" + name + "\t/" + shown + "/" + modeFlags + "\t" + firstLine(message));
@@ -537,7 +584,7 @@ public final class Dataset {
         String shown = escape(pattern);
         Regex re;
         try {
-            re = Regex.compile(pattern, flags);
+            re = compile(pattern, flags);
         } catch (RegexException e) {
             counts.refused.incrementAndGet();
             wrong.add("REFUSED\t" + EXEC + "\t/" + shown + "/" + flags + "\t" + firstLine(e.getMessage()));
@@ -653,7 +700,7 @@ public final class Dataset {
     static Regex make(Map<String, Regex> cache, String pattern, String flags) {
         return cache.computeIfAbsent(flags, f -> {
             try {
-                return Regex.compile(pattern, f);
+                return compile(pattern, f);
             } catch (RegexException e) {
                 return null;
             }
@@ -704,6 +751,14 @@ public final class Dataset {
             return;
         }
         Map<String, Regex> cache = new HashMap<>();
+        // A grammar the data finds the pattern not valid in, as an overlay may, must be refused here too.
+        for (String mode : new String[] {"unicode", "legacy"}) {
+            String modeFlags = mode.equals("unicode") ? flags + "u" : flags;
+            if (Boolean.FALSE.equals(get(valid, mode)) && make(cache, pattern, modeFlags) != null) {
+                counts.accepted.incrementAndGet();
+                wrong.add("ACCEPTED-INVALID\tcaptures.jsonl\t/" + shown + "/" + modeFlags);
+            }
+        }
         for (Object t : tests) {
             if (Boolean.TRUE.equals(get(t, "v8_deviation"))) {
                 continue;

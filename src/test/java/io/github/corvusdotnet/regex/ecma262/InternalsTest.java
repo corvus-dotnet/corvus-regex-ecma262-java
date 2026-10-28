@@ -866,10 +866,16 @@ class InternalsTest {
     /** Every member of a class of equivalent characters has the class's canonical form, and the other way round. */
     @Test
     void foldTables() {
+        for (Ucd ucd : new Ucd[] {Ucd.v13(), Ucd.v17(), Ucd.v18()}) {
+            foldTables(ucd);
+        }
+    }
+
+    private static void foldTables(Ucd ucd) {
         for (boolean unicodeMode : new boolean[] {true, false}) {
             Map<Integer, Integer> seen = new HashMap<>();
             for (int r = 0; r <= CharSet.MAX_RUNE; r++) {
-                int key = Fold.canonicalize(r, unicodeMode);
+                int key = Fold.canonicalize(ucd, r, unicodeMode);
                 Integer other = seen.get(key);
                 if (other == null && key != r) {
                     other = key;
@@ -877,21 +883,22 @@ class InternalsTest {
                 if (other != null) {
                     int[][] pairs = {{r, other}, {other, r}};
                     for (int[] ab : pairs) {
-                        Fold.Closure c = Fold.foldClosure(CharSet.of(new int[] {ab[0], ab[0]}, false), unicodeMode);
-                        assertTrue(c.variants == 1 && c.set.contains(ab[1]),
-                                "u flag " + unicodeMode + ": " + Integer.toHexString(ab[0]) + " and " + Integer.toHexString(ab[1]));
+                        Fold.Closure c =
+                                Fold.foldClosure(ucd, CharSet.of(new int[] {ab[0], ab[0]}, false), unicodeMode);
+                        assertTrue(c.variants == 1 && c.set.contains(ab[1]), "Unicode " + ucd.version + ", u flag "
+                                + unicodeMode + ": " + Integer.toHexString(ab[0]) + " and " + Integer.toHexString(ab[1]));
                     }
                 }
                 seen.put(key, r);
             }
             for (int r : new int[] {0x4B, 0x6B, 0x212A, 0x53, 0x17F, 0xDF, 0x1E9E, 0x3A3, 0x3C2, 0x3C3, 0x130, 0x131,
                 0x1C4, 0x10400}) {
-                Fold.Closure c = Fold.foldClosure(CharSet.of(new int[] {r, r}, false), unicodeMode);
+                Fold.Closure c = Fold.foldClosure(ucd, CharSet.of(new int[] {r, r}, false), unicodeMode);
                 int[] ranges = c.set.ranges;
                 for (int k = 0; k < ranges.length; k += 2) {
                     for (int member = ranges[k]; member <= ranges[k + 1]; member++) {
-                        assertEquals(Fold.canonicalize(r, unicodeMode), Fold.canonicalize(member, unicodeMode),
-                                Integer.toHexString(member));
+                        assertEquals(Fold.canonicalize(ucd, r, unicodeMode),
+                                Fold.canonicalize(ucd, member, unicodeMode), Integer.toHexString(member));
                     }
                 }
             }
@@ -929,8 +936,15 @@ class InternalsTest {
 
     @Test
     void properties() {
+        // Every name of each version's tables, under that version.
+        properties(Ucd.v13(), Tables13.BINARY_NAMES, Tables13.SCRIPT_NAMES);
+        properties(Ucd.v18(), Tables18.BINARY_NAMES, Tables18.SCRIPT_NAMES);
+        properties(Ucd.v17(), Tables17.BINARY_NAMES, Tables17.SCRIPT_NAMES);
+    }
+
+    private static void properties(Ucd ucd, String[] binaryNames, String[][] scriptNames) {
         int expressions = 0;
-        List<String> exprs = new ArrayList<>(List.of(TablesGen.BINARY_NAMES));
+        List<String> exprs = new ArrayList<>(List.of(binaryNames));
         exprs.addAll(List.of("ASCII", "Any", "Assigned", "Alpha", "AHex", "space", "XIDS", "L", "Letter", "LC", "digit",
                 "punct", "Cn"));
         for (String name : new String[] {"L", "Lu", "Uppercase_Letter", "Cased_Letter", "Mark", "Combining_Mark", "digit",
@@ -938,7 +952,7 @@ class InternalsTest {
             exprs.add("gc=" + name);
             exprs.add("General_Category=" + name);
         }
-        for (String[] names : TablesGen.SCRIPT_NAMES) {
+        for (String[] names : scriptNames) {
             for (String value : names) {
                 for (String property : new String[] {"sc", "Script", "scx", "Script_Extensions"}) {
                     exprs.add(property + "=" + value);
@@ -950,7 +964,7 @@ class InternalsTest {
             exprs.add("scx=" + value);
         }
         for (String expr : exprs) {
-            assertNotNull(CharSet.propertySet(expr), "\\p{" + expr + "} does not resolve");
+            assertNotNull(CharSet.propertySet(ucd, expr), "\\p{" + expr + "} does not resolve in " + ucd.version);
             expressions++;
         }
         assertTrue(expressions > 1000, expressions + " property expressions");
@@ -1307,7 +1321,7 @@ class InternalsTest {
     // The limits of size.
 
     static int rangesOf(String name) {
-        return CharSet.propertySet(name).ranges.length / 2;
+        return CharSet.propertySet(Ucd.v17(), name).ranges.length / 2;
     }
 
     static String nest(String open, String body, String close, int depth) {

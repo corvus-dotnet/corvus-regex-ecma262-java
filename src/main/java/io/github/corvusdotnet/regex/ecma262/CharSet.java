@@ -3,7 +3,6 @@ package io.github.corvusdotnet.regex.ecma262;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * An immutable set of code points ({@code charset.rs}). The ranges are sorted, inclusive, and neither overlap nor
@@ -230,27 +229,25 @@ final class CharSet {
     }
 
     /**
-     * The sets already built for property expressions. Only an expression ECMA-262 defines is kept, and those are a
-     * fixed few hundred, so the cache is bounded.
+     * Resolves the expression between the braces of {@code \p{...}} to its set under a version of Unicode;
+     * {@code null} for an unknown one. The sets already built are kept, a cache for each version
+     * ({@link Ucd#propertyCache}).
      */
-    private static final ConcurrentHashMap<String, CharSet> PROPERTY_CACHE = new ConcurrentHashMap<>();
-
-    /** Resolves the expression between the braces of {@code \p{...}} to its set; {@code null} for an unknown one. */
-    static CharSet propertySet(String expr) {
-        CharSet cached = PROPERTY_CACHE.get(expr);
+    static CharSet propertySet(Ucd ucd, String expr) {
+        CharSet cached = ucd.propertyCache.get(expr);
         if (cached != null) {
             return cached;
         }
-        int[] pairs = propertyPairs(expr);
+        int[] pairs = propertyPairs(ucd, expr);
         if (pairs == null) {
             return null;
         }
         CharSet set = of(pairs, false);
-        PROPERTY_CACHE.putIfAbsent(expr, set);
+        ucd.propertyCache.putIfAbsent(expr, set);
         return set;
     }
 
-    private static int[] propertyPairs(String expr) {
+    private static int[] propertyPairs(Ucd ucd, String expr) {
         int eq = expr.indexOf('=');
         if (eq >= 0) {
             String name = expr.substring(0, eq);
@@ -258,18 +255,18 @@ final class CharSet {
             switch (name) {
                 case "General_Category":
                 case "gc":
-                    return categoryPairs(value);
+                    return categoryPairs(ucd, value);
                 case "Script":
                 case "sc":
-                    return Ucd.script(value);
+                    return ucd.script(value);
                 case "Script_Extensions":
                 case "scx":
-                    return Ucd.scriptExtensions(value);
+                    return ucd.scriptExtensions(value);
                 default:
                     return null;
             }
         }
-        int[] pairs = categoryPairs(expr);
+        int[] pairs = categoryPairs(ucd, expr);
         if (pairs != null) {
             return pairs;
         }
@@ -283,13 +280,13 @@ final class CharSet {
             case "Any":
                 return new int[] {0, MAX_RUNE};
             default:
-                return Ucd.binary(canonical);
+                return ucd.binary(canonical);
         }
     }
 
-    private static int[] categoryPairs(String value) {
+    private static int[] categoryPairs(Ucd ucd, String value) {
         String name = categoryName(value);
-        return name == null ? null : Ucd.category(name);
+        return name == null ? null : ucd.category(name);
     }
 
     /** The code points in both sets. */
@@ -342,54 +339,57 @@ final class CharSet {
         }
     }
 
-    private static final class StringProperties {
-        static final List<StringProperty> ALL = build();
-
-        private static List<StringProperty> build() {
-            List<StringProperty> all = new ArrayList<>();
-            IntList union = new IntList();
-            List<int[]> every = new ArrayList<>();
-            for (String[] row : StringsGen.PROPERTIES) {
-                IntList pairs = new IntList();
-                for (String item : row[1].split(" ")) {
-                    if (item.isEmpty()) {
-                        continue;
-                    }
-                    int dots = item.indexOf("..");
-                    String lo = dots < 0 ? item : item.substring(0, dots);
-                    String hi = dots < 0 ? item : item.substring(dots + 2);
-                    pairs.add(Integer.parseInt(lo, 16), Integer.parseInt(hi, 16));
+    /**
+     * Reads the properties of strings of a version of Unicode ({@code Strings<major>.java}), with their union last.
+     * {@link Ucd#stringProperties} keeps them from their first use.
+     */
+    static StringProperty[] readStringProperties(String[][] properties) {
+        List<StringProperty> all = new ArrayList<>();
+        IntList union = new IntList();
+        List<int[]> every = new ArrayList<>();
+        for (String[] row : properties) {
+            IntList pairs = new IntList();
+            for (String item : row[1].split(" ")) {
+                if (item.isEmpty()) {
+                    continue;
                 }
-                List<int[]> strings = new ArrayList<>();
-                for (String sequence : row[2].split(";")) {
-                    if (sequence.isEmpty()) {
-                        continue;
-                    }
-                    String[] points = sequence.split(" ");
-                    int[] s = new int[points.length];
-                    for (int k = 0; k < points.length; k++) {
-                        s[k] = Integer.parseInt(points[k], 16);
-                    }
-                    strings.add(s);
-                }
-                union.addAll(pairs);
-                every.addAll(strings);
-                all.add(new StringProperty(of(pairs, false), strings));
+                int dots = item.indexOf("..");
+                String lo = dots < 0 ? item : item.substring(0, dots);
+                String hi = dots < 0 ? item : item.substring(dots + 2);
+                pairs.add(Integer.parseInt(lo, 16), Integer.parseInt(hi, 16));
             }
-            all.add(new StringProperty(of(union, false), every));
-            return all;
+            List<int[]> strings = new ArrayList<>();
+            for (String sequence : row[2].split(";")) {
+                if (sequence.isEmpty()) {
+                    continue;
+                }
+                String[] points = sequence.split(" ");
+                int[] s = new int[points.length];
+                for (int k = 0; k < points.length; k++) {
+                    s[k] = Integer.parseInt(points[k], 16);
+                }
+                strings.add(s);
+            }
+            union.addAll(pairs);
+            every.addAll(strings);
+            all.add(new StringProperty(of(pairs, false), strings));
         }
+        all.add(new StringProperty(of(union, false), every));
+        return all.toArray(new StringProperty[0]);
     }
 
-    /** The property of strings of the name ({@code RGI_Emoji} and the six it is the union of), or {@code null}. */
-    static StringProperty stringProperty(String name) {
-        List<StringProperty> all = StringProperties.ALL;
+    /**
+     * The property of strings of the name ({@code RGI_Emoji} and the six it is the union of) under a version of
+     * Unicode, or {@code null}.
+     */
+    static StringProperty stringProperty(Ucd ucd, String name) {
+        StringProperty[] all = ucd.stringProperties.get();
         if (name.equals("RGI_Emoji")) {
-            return all.get(all.size() - 1);
+            return all[all.length - 1];
         }
-        for (int k = 0; k < StringsGen.PROPERTIES.length; k++) {
-            if (StringsGen.PROPERTIES[k][0].equals(name)) {
-                return all.get(k);
+        for (int k = 0; k < ucd.strings.length; k++) {
+            if (ucd.strings[k][0].equals(name)) {
+                return all[k];
             }
         }
         return null;

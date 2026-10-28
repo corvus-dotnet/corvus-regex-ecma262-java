@@ -482,6 +482,7 @@ final class Compiler {
                 for (int k = 0; k < n.groups.size(); k++) {
                     Inst i = new Inst(op);
                     i.a = tracked.get(n.groups.get(k));
+                    i.b = n.foldVersion;
                     i.flag = unicode;
                     add(i);
                 }

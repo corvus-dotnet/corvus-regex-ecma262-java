@@ -46,6 +46,8 @@ final class Node {
     IntList name = new IntList(1);
     /** Marks a BACKREF, WORD_BOUNDARY or NOT_WORD_BOUNDARY inside a case-insensitive group. */
     boolean fold;
+    /** The major number of the version of Unicode whose case folding a BACKREF matches with. */
+    int foldVersion;
     /** {@code behind} and {@code negative} describe a LOOK. */
     boolean behind;
     boolean negative;
@@ -100,6 +102,7 @@ final class Node {
         n.groups = IntList.of(groups.toArray());
         n.name = IntList.of(name.toArray());
         n.fold = fold;
+        n.foldVersion = foldVersion;
         n.behind = behind;
         n.negative = negative;
         return n;

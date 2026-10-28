@@ -15,10 +15,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 git cur
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 # GraalVM's Node 24, whose JavaScript engine is GraalJS and whose RegExp is TRegex: the TRegex rows.
 ARG GRAALJS=25.4.4.1.1
-ARG GRAALJS_SHA256=4736908e534ae5cc19e0e5e3e8282f0241ca0d64d12f3c596b405a8ea01a604e
-RUN curl -sSfL -o /tmp/graalnode.tar.gz \
-      "https://github.com/oracle/graaljs/releases/download/graal-$GRAALJS/graalnode24-community-$GRAALJS-linux-amd64.tar.gz" \
-    && echo "$GRAALJS_SHA256  /tmp/graalnode.tar.gz" | sha256sum -c - \
+# For the architecture being built, each checked against its SHA-256.
+ARG GRAALJS_SHA256_AMD64=4736908e534ae5cc19e0e5e3e8282f0241ca0d64d12f3c596b405a8ea01a604e
+ARG GRAALJS_SHA256_AARCH64=229e154972b781528fdc279db3afd497d335692cee2d249099c25eb14d059c7b
+RUN case "$(uname -m)" in x86_64) arch=amd64 sum=$GRAALJS_SHA256_AMD64 ;; aarch64) arch=aarch64 sum=$GRAALJS_SHA256_AARCH64 ;; \
+        *) echo "no GraalJS Node is pinned for $(uname -m)"; exit 1 ;; esac \
+    && curl -sSfL -o /tmp/graalnode.tar.gz \
+      "https://github.com/oracle/graaljs/releases/download/graal-$GRAALJS/graalnode24-community-$GRAALJS-linux-$arch.tar.gz" \
+    && echo "$sum  /tmp/graalnode.tar.gz" | sha256sum -c - \
     && mkdir -p /opt/graalnode && tar -xzf /tmp/graalnode.tar.gz -C /opt/graalnode --strip-components 1 \
     && rm /tmp/graalnode.tar.gz && ln -s /opt/graalnode/bin/node /usr/local/bin/graalnode
 WORKDIR /harness

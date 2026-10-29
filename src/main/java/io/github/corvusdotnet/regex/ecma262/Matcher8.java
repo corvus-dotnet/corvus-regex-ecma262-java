@@ -473,6 +473,14 @@ final class Matcher8 {
             while ((pend0 | pend1) != 0) {
                 int k = pend0 != 0 ? Long.numberOfTrailingZeros(pend0) : 64 + Long.numberOfTrailingZeros(pend1);
                 int at = base + k;
+                // The reach is hi characters, which is hi units only over ASCII: past a unit beyond ASCII the look
+                // ahead could stop short of an occurrence that allows an earlier start, so the search is made again
+                // the plain way, which counts in characters.
+                for (int i = at, end = Math.min(at + hi, len); i < end; i++) {
+                    if ((input[i] & 0xFF) >= 0x80) {
+                        return REVERSE_BAIL;
+                    }
+                }
                 if (after <= at + hi) {
                     int q2 = literals.findWithin(input, after, at + hi);
                     if (q2 >= 0) {

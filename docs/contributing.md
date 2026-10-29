@@ -125,11 +125,12 @@ not the one it checks out.
 Every pull request merged into main releases the library with the next patch version, unless it is labelled
 `no_release`: `auto-release.yml` makes a GitHub release tagged `v<version>` when `pom.xml` or `src/main/` changed since
 the last tag, and `maven-publish.yml` writes the version into `pom.xml`, runs the tests and the test data, and signs and
-publishes the library to Maven Central. A change to the benchmark harness alone is a harness release, which publishes
-the harness image. A pull request that needs a minor or major version sets `nextVersion` in `.github/release.json`; a
-minor version is a breaking change. The documentation site takes the published documents (the getting-started page, the
-API reference, the design document and this guide) from `main`, and they describe the latest release: a change to them
-alone is merged with `no_release`, and a change to the API carries its documents, which its release brings into step.
+publishes the library to Maven Central, then asks javadoc.io to sync the version's javadoc. A change to the benchmark
+harness alone is a harness release, which publishes the harness image. A pull request that needs a minor or major
+version sets `nextVersion` in `.github/release.json`; a minor version is a breaking change. The documentation site takes
+the published documents (the getting-started page, the API reference, the design document and this guide) from `main`,
+and they describe the latest release: a change to them alone is merged with `no_release`, and a change to the API
+carries its documents, which its release brings into step.
 
 `main` is protected by a ruleset: changes arrive by pull request, and the `CI gate` and `Harness image` checks must be
 green on the branch as it will merge.

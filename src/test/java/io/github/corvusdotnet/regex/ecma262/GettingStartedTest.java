@@ -31,7 +31,10 @@ class GettingStartedTest {
         Matcher blocks = Pattern.compile("(?ms)^```java\\n(.*?)^```$").matcher(page);
         List<String> sources = new ArrayList<>();
         while (blocks.find()) {
-            sources.add(blocks.group(1));
+            // A block that is not a whole program, such as the import of Setup, is not run.
+            if (Pattern.compile("(?m)^class \\w+").matcher(blocks.group(1)).find()) {
+                sources.add(blocks.group(1));
+            }
         }
         assertTrue(sources.size() >= 5, "the page has " + sources.size() + " examples");
         return sources.stream().map(source -> DynamicTest.dynamicTest(className(source), () -> run(source)));

@@ -26,7 +26,8 @@ jobs:
     name: Publish corvus-regex-ecma262
     runs-on: ubuntu-latest
     environment: maven-central
-    timeout-minutes: 60
+    # The publication, then up to an hour for Maven Central to serve it and half an hour for javadoc.io.
+    timeout-minutes: 150
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
@@ -115,3 +116,32 @@ jobs:
           echo
           echo "https://central.sonatype.com/artifact/io.github.corvus-dotnet/corvus-regex-ecma262/$VERSION"
         } >> "$GITHUB_STEP_SUMMARY"
+    - name: Ask javadoc.io for the release's javadoc
+      # javadoc.io serves a version's javadoc (the -javadoc.jar beside it on Maven Central) only once it has synced its
+      # list of versions from Maven, which it does not do by itself: this waits for Central to serve the jar, presses
+      # javadoc.io's "Sync from Maven" (a form with a CSRF token), and waits for the version's pages. javadoc.io failing
+      # to answer is a warning, not a failed release: the release is published, and the sync can be pressed by hand.
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+        GA: io.github.corvus-dotnet/corvus-regex-ecma262
+      run: |
+        jar="https://repo1.maven.org/maven2/$GA/$VERSION/corvus-regex-ecma262-$VERSION-javadoc.jar"
+        page="https://javadoc.io/static/$GA/$VERSION/index.html"
+        ok() { [ "$(curl -s -o /dev/null -w '%{http_code}' "$1")" = 200 ]; }
+        for i in $(seq 1 60); do ok "$jar" && break; echo "Maven Central does not serve the javadoc jar yet ($i)."; sleep 60; done
+        if ! ok "$jar"; then
+          echo "::warning::Maven Central did not serve $jar within an hour: sync javadoc.io by hand (https://javadoc.io/doc/$GA)."
+          exit 0
+        fi
+        for attempt in 1 2 3; do
+          ok "$page" && break
+          cookies="$RUNNER_TEMP/javadoc-io-cookies"
+          token=$(curl -s -c "$cookies" "https://javadoc.io/versions/$GA" | grep -o 'name="csrfToken" value="[^"]*"' | head -n 1 | sed 's/.*value="//; s/"$//')
+          curl -s -o /dev/null -b "$cookies" -X POST --data-urlencode "csrfToken=$token" "https://javadoc.io/versions/$GA/sync"
+          for i in $(seq 1 10); do ok "$page" && break; sleep 60; done
+        done
+        if ok "$page"; then
+          echo "javadoc.io serves $VERSION: https://javadoc.io/doc/$GA/$VERSION" | tee -a "$GITHUB_STEP_SUMMARY"
+        else
+          echo "::warning::javadoc.io does not serve $VERSION after three syncs: sync it by hand (https://javadoc.io/doc/$GA)."
+        fi

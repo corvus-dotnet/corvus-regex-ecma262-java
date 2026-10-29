@@ -117,15 +117,17 @@ jobs:
           echo "https://central.sonatype.com/artifact/io.github.corvus-dotnet/corvus-regex-ecma262/$VERSION"
         } >> "$GITHUB_STEP_SUMMARY"
     - name: Ask javadoc.io for the release's javadoc
-      # javadoc.io serves a version's javadoc (the -javadoc.jar beside it on Maven Central) only once it has synced its
-      # list of versions from Maven, which it does not do by itself: this waits for Central to serve the jar, presses
-      # javadoc.io's "Sync from Maven" (a form with a CSRF token), and waits for the version's pages. javadoc.io failing
-      # to answer is a warning, not a failed release: the release is published, and the sync can be pressed by hand.
+      # javadoc.io serves a version's javadoc (the -javadoc.jar beside it on Maven Central) only once it has listed the
+      # version and been asked to upload it, neither of which it does by itself: this waits for Central to serve the jar,
+      # presses javadoc.io's "Sync from Maven" until the version is listed, presses "Upload selected" for it (forms with
+      # a CSRF token), and waits for the version's pages. javadoc.io failing to answer is a warning, not a failed
+      # release: the release is published, and the two can be pressed by hand.
       env:
         VERSION: ${{ steps.version.outputs.version }}
         GA: io.github.corvus-dotnet/corvus-regex-ecma262
       run: |
-        jar="https://repo1.maven.org/maven2/$GA/$VERSION/corvus-regex-ecma262-$VERSION-javadoc.jar"
+        # Maven Central's path has the group's dots as directories; javadoc.io names the group with its dots.
+        jar="https://repo1.maven.org/maven2/io/github/corvus-dotnet/corvus-regex-ecma262/$VERSION/corvus-regex-ecma262-$VERSION-javadoc.jar"
         page="https://javadoc.io/static/$GA/$VERSION/index.html"
         ok() { [ "$(curl -s -o /dev/null -w '%{http_code}' "$1")" = 200 ]; }
         for i in $(seq 1 60); do ok "$jar" && break; echo "Maven Central does not serve the javadoc jar yet ($i)."; sleep 60; done
@@ -133,15 +135,24 @@ jobs:
           echo "::warning::Maven Central did not serve $jar within an hour: sync javadoc.io by hand (https://javadoc.io/doc/$GA)."
           exit 0
         fi
+        cookies="$RUNNER_TEMP/javadoc-io-cookies"
+        versions="$RUNNER_TEMP/javadoc-io-versions.html"
+        # The versions page, with the session's cookie and the forms' token.
+        fetch() { curl -s -c "$cookies" -b "$cookies" "https://javadoc.io/versions/$GA" -o "$versions"; token=$(grep -o 'name="csrfToken" value="[^"]*"' "$versions" | head -n 1 | sed 's/.*value="//; s/"$//'); }
+        listed() { grep -q "name=\"versionId\" value=\"$VERSION\"" "$versions" || grep -q "<td>$VERSION</td>" "$versions"; }
+        post() { curl -s -o /dev/null -b "$cookies" -c "$cookies" -X POST --data-urlencode "csrfToken=$token" "$@"; }
         for attempt in 1 2 3; do
           ok "$page" && break
-          cookies="$RUNNER_TEMP/javadoc-io-cookies"
-          token=$(curl -s -c "$cookies" "https://javadoc.io/versions/$GA" | grep -o 'name="csrfToken" value="[^"]*"' | head -n 1 | sed 's/.*value="//; s/"$//')
-          curl -s -o /dev/null -b "$cookies" -X POST --data-urlencode "csrfToken=$token" "https://javadoc.io/versions/$GA/sync"
+          fetch
+          if ! listed; then
+            post "https://javadoc.io/versions/$GA/sync"
+            for i in $(seq 1 10); do fetch; listed && break; sleep 30; done
+          fi
+          listed && post --data-urlencode "versionId=$VERSION" "https://javadoc.io/versions/$GA/upload"
           for i in $(seq 1 10); do ok "$page" && break; sleep 60; done
         done
         if ok "$page"; then
           echo "javadoc.io serves $VERSION: https://javadoc.io/doc/$GA/$VERSION" | tee -a "$GITHUB_STEP_SUMMARY"
         else
-          echo "::warning::javadoc.io does not serve $VERSION after three syncs: sync it by hand (https://javadoc.io/doc/$GA)."
+          echo "::warning::javadoc.io does not serve $VERSION after three tries: sync and upload it by hand (https://javadoc.io/versions/$GA)."
         fi

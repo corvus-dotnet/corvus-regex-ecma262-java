@@ -5,11 +5,7 @@
       "tag": "v",
       "paths": [
         "pom.xml",
-        "src/main/",
-        "docs/getting-started.md",
-        "docs/api.md",
-        "docs/design.md",
-        "docs/contributing.md"
+        "src/main/"
       ],
       "stamp": [
         {

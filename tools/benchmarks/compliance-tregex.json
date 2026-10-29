@@ -1,9 +1,9 @@
 {
- "right": 15616836,
+ "right": 15654593,
  "wrong": 31409,
  "refused": 23,
  "acceptedInvalid": 33,
- "limited": 6513,
+ "limited": 7436,
  "judge": {
   "runner": "https://github.com/corvus-dotnet/corvus-regex-ecma262-java/blob/main/tools/benchmarks/tregex-compliance.py",
   "calls": {
@@ -22,5 +22,5 @@
    "leaves": "utf8"
   }
  ],
- "dataCommit": "1b4c4353c4fa3fc3e318db32ef0261391519b9a5"
+ "dataCommit": "36e8b71c181fa10554760f461dc8c526fd3ffb42"
 }

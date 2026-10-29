@@ -83,7 +83,7 @@ jobs:
       if: steps.version.outputs.published == 'false'
       with:
         repository: corvus-dotnet/ecma262-regex-test-data
-        ref: cff0860b7ebc5eb9c801eb9f8cec9d5398688ff2
+        ref: 36e8b71c181fa10554760f461dc8c526fd3ffb42
         path: ecma262-regex-test-data
         persist-credentials: false
     - name: Write the version into pom.xml

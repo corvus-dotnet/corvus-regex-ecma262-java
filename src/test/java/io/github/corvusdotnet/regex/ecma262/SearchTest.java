@@ -167,6 +167,33 @@ class SearchTest {
         }
     }
 
+    /**
+     * The windows search with the reverse automaton tries a waiting start once no later occurrence could allow an
+     * earlier one, looking for one within the window's reach, which is a number of characters. Over two- and three-byte
+     * UTF-8, or surrogate pairs under u, that is more units than characters: looked for that many units ahead, the later
+     * occurrence was missed and a later start answered ((?:b.{2,6})?x over "bxſſſſx" from 1, not 0).
+     */
+    @Test
+    void aWindowReachesAsManyCharactersAsItCounts() {
+        String[] patterns = {"(?:b.{2,6})?x", "(?:[a-z][\\s\\S]{1,8})?xy", "(?:\\w[^a]{3,5})?x", "(|([^a]|[^a][^a]){2,4}){2}(\\3){3,5}?x"};
+        String[] wides = {"\u017f", "\u00e9", "\u20ac", "\u4e2d", "\ud83d\ude00", "a"};
+        for (String pattern : patterns) {
+            String literal = pattern.endsWith("xy") ? "xy" : "x";
+            for (String flags : new String[] {"", "u"}) {
+                Regex[] both = searchedAndPlain(pattern, flags);
+                for (String wide : wides) {
+                    for (int k = 0; k <= 9; k++) {
+                        String text = "b" + literal + wide.repeat(k) + literal;
+                        String where = "/" + pattern + "/" + flags + " on " + text;
+                        assertEquals(spans(both[1].findAll(text)), spans(both[0].findAll(text)), where + " over UTF-16");
+                        Utf8Text u8 = Utf8Text.of(text);
+                        assertEquals(spans(both[1].findAll(u8)), spans(both[0].findAll(u8)), where + " over UTF-8");
+                    }
+                }
+            }
+        }
+    }
+
     /** A literal with a byte rare in text is found by the search for that byte, wherever in the literal it is. */
     @Test
     void aLiteralWithARareByteIsFoundAsAnyOther() {

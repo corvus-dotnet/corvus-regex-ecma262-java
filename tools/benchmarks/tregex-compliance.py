@@ -6,9 +6,10 @@ A JavaScript engine cannot be stopped inside a match, so dataset.mjs runs with D
 to stderr as it gives it, and a watchdog thread in the same process times each answer from just before TRegex is
 called and ends the process when one passes 2 seconds. That answer is counted unanswered ("limit", as the judging rule
 of the data counts an answer an engine never gave), and a new process goes on from the next answer (DATASET_FROM),
-so a record loses only the answer that did not finish. Once three answers of a record have reached the limit, its
-other answers are unanswered without being asked, so that a pattern TRegex cannot answer on any text costs seconds,
-not one limit for each of its answers. The limit is the wall clock's (no JavaScript thread can read another's CPU
+so a record loses only the answer that did not finish. A process that ends on an answer without reaching the limit
+is asked that answer once more, since GraalVM's Node now and then ends on an answer it gives on another run. Once three
+answers of a record have reached the limit, its other answers are unanswered without being asked, so that a pattern
+TRegex cannot answer on any text costs seconds, not one limit for each of its answers. The limit is the wall clock's (no JavaScript thread can read another's CPU
 time), so the run is made with nothing else running on the machine. The output is the runner's: a line for each file and the last
 line of counts, with each answer that reached the limit named.
 
@@ -43,6 +44,7 @@ start = time.time()
 engine = ""
 at = None  # (file, record, answer) to start from: None for the beginning
 at_limit = 0  # the answers of the record at `at` that reached the limit
+retried = set()  # the answers asked again after the process ended on them
 while True:
     env = dict(os.environ, DATASET_LIMIT="1")
     env.pop("DATASET_FROM", None)
@@ -98,10 +100,21 @@ while True:
                     engine = line[line.rindex("("):]
             break
         why = f"the process ended with {child.returncode}"
-    os.killpg(child.pid, signal.SIGKILL)
+    # Its process group can be gone already (it ended, or it ended itself at the limit).
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
     child.wait()
     if current[0] is None:
         raise SystemExit(f"dataset.mjs ended before its first record: {why}")
+    # A process that ended on an answer (not at the limit) is asked that answer once more: GraalVM's Node now and then
+    # ends with 1 on an answer it gives on another run, and only an answer that ends it again is unanswered.
+    if why.startswith("the process ended") and (current[0], current[1], given) not in retried:
+        retried.add((current[0], current[1], given))
+        print(f"AGAIN {current[0]} record {current[1] + 1} answer {given + 1}: {why}", file=sys.stderr, flush=True)
+        at = (current[0], current[1], given)
+        continue
     # The answer being given is unanswered; the next process goes on from the one after it.
     per_file.setdefault(current[0], dict.fromkeys(FIELDS, 0))["limit"] += 1
     limited.append((current[0], current[1], given, why))

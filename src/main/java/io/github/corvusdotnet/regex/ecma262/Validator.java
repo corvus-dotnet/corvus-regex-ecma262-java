@@ -9,7 +9,9 @@ import java.util.Arrays;
  *
  * <p>It reads the pattern where it lies, decoding a character only where the grammar needs it. It keeps the groups and
  * the nested classes of the v flag on stacks of its own rather than recursing, so that no pattern can overflow the
- * stack, and it keeps a group name as its place in the pattern. Each thread has one validator, whose stacks grow to
+ * stack, and it keeps a group name as its place in the pattern and a named group as the disjunction and the alternative it
+ * lies in, never a copy of the path to it, so its memory is in proportion to the pattern however deeply named groups nest.
+ * Each thread has one validator, whose stacks grow to
  * what the patterns it reads need and are kept for the next. It asks the grammar only: the parser's limits of size (the
  * length of the pattern, the nesting of groups, the size it counts) belong to compiling a pattern, and none of them
  * applies here.
@@ -31,6 +33,8 @@ final class Validator {
     // A frame of a class of the v flag: whether it is negated, its phase, its operator, whether it may contain
     // strings.
     private static final int CLASS_FRAME = 4;
+    /** The entries of a disjunction in {@code disjunctionTable}. */
+    private static final int DISJUNCTION_FRAME = 4;
     private static final int PHASE_START = 0;
     private static final int PHASE_UNION = 1;
     private static final int PHASE_OPERANDS = 2;
@@ -67,16 +71,25 @@ final class Validator {
     private boolean hasNames;
     private long groupCount;
     private int disjunctions;
-    /** The alternatives that enclose the position, as disjunction and alternative (the parser's path). */
+    /**
+     * The disjunctions open at the position, outermost first (the parser's path, whose alternatives are in
+     * {@code disjunctionTable}).
+     */
     private final Stack path = new Stack();
     /** The groups open at the position: the kind of each. */
     private final Stack frames = new Stack();
     /**
-     * Each named group: the start and the end of its name, the start and the length of its path in
-     * {@code namePaths}, and the hash of its name.
+     * Each named group: the start and the end of its name, the disjunction and the alternative it lies directly in, and
+     * the hash of its name.
      */
     private final Stack names = new Stack();
-    private final Stack namePaths = new Stack();
+    /**
+     * Each disjunction, by its number from 1, as {@link #DISJUNCTION_FRAME} entries: the disjunction it lies in (0 for
+     * the pattern's own) and the alternative of that one it lies in, its own current alternative, and whether it is
+     * still open. A closed disjunction's first two entries may be moved on to an ancestor (see
+     * {@link #separateAlternatives}).
+     */
+    private final Stack disjunctionTable = new Stack();
     /**
      * The places of the named groups by the hash of their names: one more than the place in {@code names} of the last
      * group with each name (0 for none). Open addressing, a power of two long and at most half full.
@@ -147,7 +160,7 @@ final class Validator {
         path.reset();
         frames.reset();
         names.reset();
-        namePaths.reset();
+        disjunctionTable.reset();
         references.reset();
         classes.reset();
         if (nameTable.length > MAX_RETAINED_TABLE) {
@@ -239,7 +252,7 @@ final class Validator {
             int c = peek();
             if (c == '|') {
                 next();
-                path.items[path.n - 1]++;
+                disjunctionTable.items[frame(path.items[path.n - 1]) + 2]++;
                 continue;
             }
             if (c == ')') {
@@ -248,7 +261,7 @@ final class Validator {
                     return false;
                 }
                 next();
-                path.n -= 2;
+                disjunctionTable.items[frame(path.pop()) + 3] = 0;
                 int kind = frames.pop();
                 // Annex B lets a quantifier follow a lookahead. The u flag does not, and neither lets one follow a
                 // lookbehind.
@@ -293,9 +306,19 @@ final class Validator {
     }
 
     private void pushDisjunction() {
+        int up = path.n == 0 ? 0 : path.items[path.n - 1];
+        int upAlternative = up == 0 ? 0 : disjunctionTable.items[frame(up) + 2];
+        disjunctionTable.push(up);
+        disjunctionTable.push(upAlternative);
+        disjunctionTable.push(0);
+        disjunctionTable.push(1);
         disjunctions++;
         path.push(disjunctions);
-        path.push(0);
+    }
+
+    /** The place in {@code disjunctionTable} of a disjunction's entries. */
+    private static int frame(int disjunction) {
+        return (disjunction - 1) * DISJUNCTION_FRAME;
     }
 
     /** Counts the capturing groups of the pattern and notes whether any is named. */
@@ -494,14 +517,13 @@ final class Validator {
             }
         }
         int entry = names.n;
+        int disjunction = path.items[path.n - 1];
+        int alternative = disjunctionTable.items[frame(disjunction) + 2];
         names.push(start);
         names.push(stop);
-        names.push(namePaths.n);
-        names.push(path.n);
+        names.push(disjunction);
+        names.push(alternative);
         names.push(hash);
-        for (int k = 0; k < path.n; k++) {
-            namePaths.push(path.items[k]);
-        }
         if (found) {
             nameTable[slot] = entry + 1;
         } else {
@@ -511,19 +533,24 @@ final class Validator {
     }
 
     /**
-     * Whether a named group (by the start and the length of its path) and the current position lie in different
-     * alternatives of some disjunction.
+     * Whether a named group, by the disjunction and the alternative it lies directly in, and the current position lie in
+     * different alternatives of some disjunction: of the innermost disjunction around the group that is still open,
+     * which is the innermost around both. A disjunction never opens again once closed, so the walk out of closed ones
+     * moves each one it passes on to its grandparent, and the walks take time in proportion to the pattern in all.
      */
-    private boolean separateAlternatives(int otherStart, int otherLen) {
-        for (int k = 0; k + 1 < otherLen && k + 1 < path.n; k += 2) {
-            if (namePaths.items[otherStart + k] != path.items[k]) {
-                break;
+    private boolean separateAlternatives(int disjunction, int alternative) {
+        int[] table = disjunctionTable.items;
+        while (table[frame(disjunction) + 3] == 0) {
+            int at = frame(disjunction);
+            int up = frame(table[at]);
+            if (table[up + 3] == 0) {
+                table[at] = table[up];
+                table[at + 1] = table[up + 1];
             }
-            if (namePaths.items[otherStart + k + 1] != path.items[k + 1]) {
-                return true;
-            }
+            alternative = table[at + 1];
+            disjunction = table[at];
         }
-        return false;
+        return table[frame(disjunction) + 2] != alternative;
     }
 
     /** Reads the modifiers of a group such as {@code (?i:...)} or {@code (?s-i:...)}, after the "(?", to its ':'. */

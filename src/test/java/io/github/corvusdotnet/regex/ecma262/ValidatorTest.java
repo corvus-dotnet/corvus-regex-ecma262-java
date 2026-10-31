@@ -2,6 +2,7 @@ package io.github.corvusdotnet.regex.ecma262;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
@@ -82,6 +83,12 @@ class ValidatorTest {
             "\\/", "\\a", "\\_", "😀{2}", "[😀-😁]", "[😁-😀]", "\uD800", "[\uDC00-\uD800]", "(?<a\uD800>x)",
             "\\p{General_Category=Lu}", "\\p{Script_Extensions=Latin}", "\\p{ID_Compat_Math_Start}", "\\p{Lowercase}",
             "\\p{Script=Katakana_Or_Hiragana}", "\\p{Basic_Emoji}", "\\P{Basic_Emoji}",
+            // The disjunction asked is the innermost still open around the earlier group, wherever the groups close.
+            "(?:(?<a>x))|(?<a>y)", "(?:(?<a>x)|b)(?<a>y)", "((?<a>x)|(?:(?<a>y)))", "(?:(?<a>x)|(?:c))(?:d|(?<a>y))",
+            "(?:(?:(?<a>x)))|(?:(?:(?<a>y)))|(?<a>z)", "(?:(?:(?<a>x))|(?<b>y))(?<a>z)",
+            "(?:(?<a>x)|(?:(?<a>y)|(?<a>z)))", "(?:(?:(?<a>x)|y)|(?<a>z))", "(?:(?:(?<a>x)|y)(?<a>z))",
+            "(?<a>x)|(?:(?:(?<b>y))(?<a>z))", "(?:(?:(?<a>x))(?:(?<b>y)))|(?<a>z)(?<b>w)",
+            "(?:(?<a>x))(?:(?<b>y)|(?<a>z))",
         };
         for (String p : patterns) {
             for (String flags : new String[] {"", "u", "v", "i", "iu"}) {
@@ -95,6 +102,41 @@ class ValidatorTest {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Each named group keeps the disjunction and the alternative it lies in, not a copy of the path to it, so nested
+     * named groups take memory in proportion to their number, not to its square. A name kept deep inside one
+     * alternative and used again in the next walks out of the closed groups to the disjunction around both, and the walk
+     * is shortened as it goes, so each name does not walk the whole depth again.
+     */
+    @Test
+    void namedGroupsAreReadInMemoryAndTimeInProportionToThePattern() {
+        com.sun.management.ThreadMXBean threads =
+                (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+        StringBuilder nested = new StringBuilder();
+        for (int k = 0; k < 100_000; k++) {
+            nested.append("(?<g").append(k).append('>');
+        }
+        nested.append('a').append(")".repeat(100_000));
+        StringBuilder deep = new StringBuilder();
+        StringBuilder again = new StringBuilder();
+        for (int k = 0; k < 20_000; k++) {
+            deep.append("(?<n").append(k).append(">a)");
+            again.append("(?<n").append(k).append(">b)");
+        }
+        String reused = "(?:".repeat(50_000) + deep + ")".repeat(50_000) + "|" + again;
+        Object[][] cases = {{nested.toString(), true}, {reused, true}, {reused + "(?<n0>c)", false}};
+        for (Object[] c : cases) {
+            String pattern = (String) c[0];
+            long before = threads.getCurrentThreadAllocatedBytes();
+            long clock = System.nanoTime();
+            assertEquals(c[1], Regex.isValidPattern(pattern, "u"));
+            long took = System.nanoTime() - clock;
+            long bytes = threads.getCurrentThreadAllocatedBytes() - before;
+            assertTrue(bytes < 64L * pattern.length(), () -> bytes + " bytes for a pattern of " + pattern.length());
+            assertTrue(took < 10_000_000_000L, () -> took + " ns for a pattern of " + pattern.length());
         }
     }
 

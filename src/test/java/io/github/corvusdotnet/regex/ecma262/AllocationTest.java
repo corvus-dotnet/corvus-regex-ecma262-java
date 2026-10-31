@@ -134,6 +134,7 @@ class AllocationTest {
             {"(?<a>x)(?<a>y)", "u"},
             {names.toString(), "u"},
             {nested, "u"},
+            {"(a)".repeat(300), "u"},
         };
         Flags[] flags = new Flags[cases.length];
         for (int k = 0; k < cases.length; k++) {

@@ -353,6 +353,49 @@ public final class Regex {
         return valid != null && valid;
     }
 
+    /**
+     * Whether the pattern is valid in the grammar of the flags, decided with nothing allocated (see {@link
+     * #isValidPattern(String, Flags, Edition, UnicodeVersion)}). Unlike {@link #isValid(String, String)}, it does not
+     * apply the limits of size, so a pattern too large to compile is valid here.
+     */
+    public static boolean isValidPattern(String pattern, String flags) {
+        int bits = Flags.bitsOf(flags);
+        if (bits < 0) {
+            return false;
+        }
+        return Validator.isValid(pattern, (bits & (Flags.U | Flags.V)) != 0, (bits & Flags.V) != 0, false,
+                UnicodeVersion.DEFAULT.ucd());
+    }
+
+    /**
+     * Whether the pattern is valid in the grammar of ECMA-262 for the flags, of an edition and under a version of
+     * Unicode. It asks the grammar only: unlike {@link #isValid(String, Flags, Edition, UnicodeVersion)}, which reads
+     * the pattern as compiling it would, it does not apply this engine's limits of size ({@link #MAX_PATTERN_LENGTH},
+     * {@link #MAX_NESTING}, {@link #MAX_SIZE}), so a pattern too large to compile is valid here. It reads the pattern in
+     * place with stacks of its own, so no pattern can overflow the stack of the thread, and once the thread's stacks
+     * have grown to what its patterns need it allocates nothing. The u and v flags choose the grammar, and the others
+     * do not change it. It is {@code false} too when the flags and the edition are not valid together.
+     *
+     * <pre>{@code
+     * Flags u = Flags.parse("u");
+     * // Valid in the grammar, though over the limits of size, so isValid says no.
+     * String deep = "(".repeat(5000) + ")".repeat(5000);
+     * assert Regex.isValidPattern(deep, u, Edition.CURRENT, UnicodeVersion.DEFAULT);
+     * assert !Regex.isValid(deep, u, Edition.CURRENT, UnicodeVersion.DEFAULT);
+     * // ECMAScript 2020 has no modifier groups.
+     * assert !Regex.isValidPattern("(?i:a)", u, Edition.ES2020, UnicodeVersion.DEFAULT);
+     * }</pre>
+     */
+    public static boolean isValidPattern(String pattern, Flags flags, Edition edition,
+            UnicodeVersion unicodeVersion) {
+        boolean es2020 = edition == Edition.ES2020;
+        if (es2020 && (flags.hasIndices() || flags.unicodeSets())) {
+            return false;
+        }
+        return Validator.isValid(pattern, flags.unicode() || flags.unicodeSets(), flags.unicodeSets(), es2020,
+                unicodeVersion.ucd());
+    }
+
     private static Parser.Parsed read(String pattern, Parser.Syntax syntax) {
         try {
             return Parser.parseWith(pattern, syntax);

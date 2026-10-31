@@ -109,6 +109,8 @@ final class Ucd {
     private final int[] upperCases;
     /** The properties of strings of the v flag ({@code Strings<major>.java}). */
     final String[][] strings;
+    /** Every name of every script: the long name of each, followed by its aliases. */
+    final String[][] scriptNames;
 
     // The General_Category values that are groups of other values, the Assigned property (the code points that have a
     // General_Category other than Cn) and the Unknown script (the code points that belong to no script: the
@@ -138,10 +140,12 @@ final class Ucd {
      * defines is kept, and those are a fixed few hundred, so the cache is bounded.
      */
     final ConcurrentHashMap<String, CharSet> propertyCache = new ConcurrentHashMap<>();
+    /** The expressions {@code \p{...}} may hold, for the grammar-only reader ({@link Validator}). */
+    final Lazy<Validator.PropertyNames> propertyNames = new Lazy<>(() -> Validator.PropertyNames.of(this));
 
     private Ucd(String version, Function<String, Table> categoryTable, Function<String, Table> binaryTable,
             Function<String, Table> scriptTable, Function<String, Table> scriptExtensionsTable, int[] caseFolds,
-            int[] upperCases, String[][] strings) {
+            int[] upperCases, String[][] strings, String[][] scriptNames) {
         this.version = version;
         this.major = Integer.parseInt(version.substring(0, version.indexOf('.')));
         this.categoryTable = categoryTable;
@@ -151,6 +155,7 @@ final class Ucd {
         this.caseFolds = caseFolds;
         this.upperCases = upperCases;
         this.strings = strings;
+        this.scriptNames = scriptNames;
         this.stringProperties = new Lazy<>(() -> CharSet.readStringProperties(strings));
     }
 
@@ -158,19 +163,19 @@ final class Ucd {
     private static final class V13 {
         static final Ucd UCD = new Ucd(Tables13.VERSION, Tables13::categoryTable, Tables13::binaryTable,
                 Tables13::scriptTable, Tables13::scriptExtensionsTable, Tables13.CASE_FOLDS, Tables13.UPPER_CASES,
-                Strings13.PROPERTIES);
+                Strings13.PROPERTIES, Tables13.SCRIPT_NAMES);
     }
 
     private static final class V17 {
         static final Ucd UCD = new Ucd(Tables17.VERSION, Tables17::categoryTable, Tables17::binaryTable,
                 Tables17::scriptTable, Tables17::scriptExtensionsTable, Tables17.CASE_FOLDS, Tables17.UPPER_CASES,
-                Strings17.PROPERTIES);
+                Strings17.PROPERTIES, Tables17.SCRIPT_NAMES);
     }
 
     private static final class V18 {
         static final Ucd UCD = new Ucd(Tables18.VERSION, Tables18::categoryTable, Tables18::binaryTable,
                 Tables18::scriptTable, Tables18::scriptExtensionsTable, Tables18.CASE_FOLDS, Tables18.UPPER_CASES,
-                Strings18.PROPERTIES);
+                Strings18.PROPERTIES, Tables18.SCRIPT_NAMES);
     }
 
     /** Unicode 13.0. */
@@ -244,6 +249,51 @@ final class Ucd {
                 return t == null ? null : t.ranges();
         }
         return built.get().clone();
+    }
+
+    /** Whether the General_Category value has a table, by its short name (see {@link #category}). */
+    boolean hasCategory(String name) {
+        switch (name) {
+            case "L":
+            case "LC":
+            case "M":
+            case "N":
+            case "P":
+            case "S":
+            case "Z":
+            case "C":
+                return true;
+            default:
+                return categoryTable.apply(name) != null;
+        }
+    }
+
+    /** Whether the binary property has a table, by its canonical name (see {@link #binary}). */
+    boolean hasBinary(String name) {
+        return name.equals("Assigned") || binaryTable.apply(name) != null;
+    }
+
+    /** Whether the Script value has a table (see {@link #script}). */
+    boolean hasScript(String name) {
+        return isScriptWithoutTable(name) || scriptTable.apply(name) != null;
+    }
+
+    /** Whether the Script_Extensions value has a table (see {@link #scriptExtensions}). */
+    boolean hasScriptExtensions(String name) {
+        return isScriptWithoutTable(name) || scriptExtensionsTable.apply(name) != null;
+    }
+
+    /** The scripts whose sets are made here, not generated: Unknown, and Katakana_Or_Hiragana, which is empty. */
+    private static boolean isScriptWithoutTable(String name) {
+        switch (name) {
+            case "Unknown":
+            case "Zzzz":
+            case "Katakana_Or_Hiragana":
+            case "Hrkt":
+                return true;
+            default:
+                return false;
+        }
     }
 
     /**

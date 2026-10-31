@@ -2,7 +2,9 @@ package io.github.corvusdotnet.regex.ecma262;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * An immutable set of code points ({@code charset.rs}). The ranges are sorted, inclusive, and neither overlap nor
@@ -123,109 +125,128 @@ final class CharSet {
         return (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_';
     }
 
+    /** The General_Category values ECMA-262 lists: the short name of each, then every name it may be written as. */
+    static final String[][] CATEGORY_NAMES = {
+        {"L", "Letter", "L"},
+        {"Ll", "Lowercase_Letter", "Ll"},
+        {"Lu", "Uppercase_Letter", "Lu"},
+        {"Lt", "Titlecase_Letter", "Lt"},
+        {"LC", "Cased_Letter", "LC"},
+        {"Lm", "Modifier_Letter", "Lm"},
+        {"Lo", "Other_Letter", "Lo"},
+        {"M", "Mark", "Combining_Mark", "M"},
+        {"Mn", "Nonspacing_Mark", "Mn"},
+        {"Mc", "Spacing_Mark", "Mc"},
+        {"Me", "Enclosing_Mark", "Me"},
+        {"N", "Number", "N"},
+        {"Nd", "Decimal_Number", "digit", "Nd"},
+        {"Nl", "Letter_Number", "Nl"},
+        {"No", "Other_Number", "No"},
+        {"P", "Punctuation", "punct", "P"},
+        {"Pc", "Connector_Punctuation", "Pc"},
+        {"Pd", "Dash_Punctuation", "Pd"},
+        {"Ps", "Open_Punctuation", "Ps"},
+        {"Pe", "Close_Punctuation", "Pe"},
+        {"Pi", "Initial_Punctuation", "Pi"},
+        {"Pf", "Final_Punctuation", "Pf"},
+        {"Po", "Other_Punctuation", "Po"},
+        {"S", "Symbol", "S"},
+        {"Sm", "Math_Symbol", "Sm"},
+        {"Sc", "Currency_Symbol", "Sc"},
+        {"Sk", "Modifier_Symbol", "Sk"},
+        {"So", "Other_Symbol", "So"},
+        {"Z", "Separator", "Z"},
+        {"Zs", "Space_Separator", "Zs"},
+        {"Zl", "Line_Separator", "Zl"},
+        {"Zp", "Paragraph_Separator", "Zp"},
+        {"C", "Other", "C"},
+        {"Cc", "Control", "cntrl", "Cc"},
+        {"Cf", "Format", "Cf"},
+        {"Cs", "Surrogate", "Cs"},
+        {"Co", "Private_Use", "Co"},
+        {"Cn", "Unassigned", "Cn"},
+    };
+
+    /** Each name a table's rows may be written as, to the first name of its row. */
+    private static Map<String, String> byName(String[][] rows) {
+        Map<String, String> map = new HashMap<>();
+        for (String[] row : rows) {
+            for (int k = 1; k < row.length; k++) {
+                map.put(row[k], row[0]);
+            }
+        }
+        return map;
+    }
+
+    private static final Map<String, String> CATEGORY_NAMES_BY_NAME = byName(CATEGORY_NAMES);
+
     /** The short name of a General_Category value, from its long name, an alias or the short name itself. */
     private static String categoryName(String value) {
-        switch (value) {
-            case "Letter": case "L": return "L";
-            case "Lowercase_Letter": case "Ll": return "Ll";
-            case "Uppercase_Letter": case "Lu": return "Lu";
-            case "Titlecase_Letter": case "Lt": return "Lt";
-            case "Cased_Letter": case "LC": return "LC";
-            case "Modifier_Letter": case "Lm": return "Lm";
-            case "Other_Letter": case "Lo": return "Lo";
-            case "Mark": case "Combining_Mark": case "M": return "M";
-            case "Nonspacing_Mark": case "Mn": return "Mn";
-            case "Spacing_Mark": case "Mc": return "Mc";
-            case "Enclosing_Mark": case "Me": return "Me";
-            case "Number": case "N": return "N";
-            case "Decimal_Number": case "digit": case "Nd": return "Nd";
-            case "Letter_Number": case "Nl": return "Nl";
-            case "Other_Number": case "No": return "No";
-            case "Punctuation": case "punct": case "P": return "P";
-            case "Connector_Punctuation": case "Pc": return "Pc";
-            case "Dash_Punctuation": case "Pd": return "Pd";
-            case "Open_Punctuation": case "Ps": return "Ps";
-            case "Close_Punctuation": case "Pe": return "Pe";
-            case "Initial_Punctuation": case "Pi": return "Pi";
-            case "Final_Punctuation": case "Pf": return "Pf";
-            case "Other_Punctuation": case "Po": return "Po";
-            case "Symbol": case "S": return "S";
-            case "Math_Symbol": case "Sm": return "Sm";
-            case "Currency_Symbol": case "Sc": return "Sc";
-            case "Modifier_Symbol": case "Sk": return "Sk";
-            case "Other_Symbol": case "So": return "So";
-            case "Separator": case "Z": return "Z";
-            case "Space_Separator": case "Zs": return "Zs";
-            case "Line_Separator": case "Zl": return "Zl";
-            case "Paragraph_Separator": case "Zp": return "Zp";
-            case "Other": case "C": return "C";
-            case "Control": case "cntrl": case "Cc": return "Cc";
-            case "Format": case "Cf": return "Cf";
-            case "Surrogate": case "Cs": return "Cs";
-            case "Private_Use": case "Co": return "Co";
-            case "Unassigned": case "Cn": return "Cn";
-            default: return null;
-        }
+        return CATEGORY_NAMES_BY_NAME.get(value);
     }
+
+    /** The binary properties ECMA-262 lists: the canonical name of each, then every name it may be written as. */
+    static final String[][] BINARY_PROPERTY_NAMES = {
+        {"ASCII", "ASCII"},
+        {"ASCII_Hex_Digit", "ASCII_Hex_Digit", "AHex"},
+        {"Alphabetic", "Alphabetic", "Alpha"},
+        {"Any", "Any"},
+        {"Assigned", "Assigned"},
+        {"Bidi_Control", "Bidi_Control", "Bidi_C"},
+        {"Bidi_Mirrored", "Bidi_Mirrored", "Bidi_M"},
+        {"Case_Ignorable", "Case_Ignorable", "CI"},
+        {"Cased", "Cased"},
+        {"Changes_When_Casefolded", "Changes_When_Casefolded", "CWCF"},
+        {"Changes_When_Casemapped", "Changes_When_Casemapped", "CWCM"},
+        {"Changes_When_Lowercased", "Changes_When_Lowercased", "CWL"},
+        {"Changes_When_NFKC_Casefolded", "Changes_When_NFKC_Casefolded", "CWKCF"},
+        {"Changes_When_Titlecased", "Changes_When_Titlecased", "CWT"},
+        {"Changes_When_Uppercased", "Changes_When_Uppercased", "CWU"},
+        {"Dash", "Dash"},
+        {"Default_Ignorable_Code_Point", "Default_Ignorable_Code_Point", "DI"},
+        {"Deprecated", "Deprecated", "Dep"},
+        {"Diacritic", "Diacritic", "Dia"},
+        {"Emoji", "Emoji"},
+        {"Emoji_Component", "Emoji_Component", "EComp"},
+        {"Emoji_Modifier", "Emoji_Modifier", "EMod"},
+        {"Emoji_Modifier_Base", "Emoji_Modifier_Base", "EBase"},
+        {"Emoji_Presentation", "Emoji_Presentation", "EPres"},
+        {"Extended_Pictographic", "Extended_Pictographic", "ExtPict"},
+        {"Extender", "Extender", "Ext"},
+        {"Grapheme_Base", "Grapheme_Base", "Gr_Base"},
+        {"Grapheme_Extend", "Grapheme_Extend", "Gr_Ext"},
+        {"Hex_Digit", "Hex_Digit", "Hex"},
+        {"IDS_Binary_Operator", "IDS_Binary_Operator", "IDSB"},
+        {"IDS_Trinary_Operator", "IDS_Trinary_Operator", "IDST"},
+        {"ID_Continue", "ID_Continue", "IDC"},
+        {"ID_Start", "ID_Start", "IDS"},
+        {"Ideographic", "Ideographic", "Ideo"},
+        {"Join_Control", "Join_Control", "Join_C"},
+        {"Logical_Order_Exception", "Logical_Order_Exception", "LOE"},
+        {"Lowercase", "Lowercase", "Lower"},
+        {"Math", "Math"},
+        {"Noncharacter_Code_Point", "Noncharacter_Code_Point", "NChar"},
+        {"Pattern_Syntax", "Pattern_Syntax", "Pat_Syn"},
+        {"Pattern_White_Space", "Pattern_White_Space", "Pat_WS"},
+        {"Quotation_Mark", "Quotation_Mark", "QMark"},
+        {"Radical", "Radical"},
+        {"Regional_Indicator", "Regional_Indicator", "RI"},
+        {"Sentence_Terminal", "Sentence_Terminal", "STerm"},
+        {"Soft_Dotted", "Soft_Dotted", "SD"},
+        {"Terminal_Punctuation", "Terminal_Punctuation", "Term"},
+        {"Unified_Ideograph", "Unified_Ideograph", "UIdeo"},
+        {"Uppercase", "Uppercase", "Upper"},
+        {"Variation_Selector", "Variation_Selector", "VS"},
+        {"White_Space", "White_Space", "space"},
+        {"XID_Continue", "XID_Continue", "XIDC"},
+        {"XID_Start", "XID_Start", "XIDS"},
+    };
+
+    private static final Map<String, String> BINARY_PROPERTY_NAMES_BY_NAME = byName(BINARY_PROPERTY_NAMES);
 
     /** The canonical name of a binary property ECMA-262 lists, from the name or an alias. */
     private static String binaryName(String name) {
-        switch (name) {
-            case "ASCII": return "ASCII";
-            case "ASCII_Hex_Digit": case "AHex": return "ASCII_Hex_Digit";
-            case "Alphabetic": case "Alpha": return "Alphabetic";
-            case "Any": return "Any";
-            case "Assigned": return "Assigned";
-            case "Bidi_Control": case "Bidi_C": return "Bidi_Control";
-            case "Bidi_Mirrored": case "Bidi_M": return "Bidi_Mirrored";
-            case "Case_Ignorable": case "CI": return "Case_Ignorable";
-            case "Cased": return "Cased";
-            case "Changes_When_Casefolded": case "CWCF": return "Changes_When_Casefolded";
-            case "Changes_When_Casemapped": case "CWCM": return "Changes_When_Casemapped";
-            case "Changes_When_Lowercased": case "CWL": return "Changes_When_Lowercased";
-            case "Changes_When_NFKC_Casefolded": case "CWKCF": return "Changes_When_NFKC_Casefolded";
-            case "Changes_When_Titlecased": case "CWT": return "Changes_When_Titlecased";
-            case "Changes_When_Uppercased": case "CWU": return "Changes_When_Uppercased";
-            case "Dash": return "Dash";
-            case "Default_Ignorable_Code_Point": case "DI": return "Default_Ignorable_Code_Point";
-            case "Deprecated": case "Dep": return "Deprecated";
-            case "Diacritic": case "Dia": return "Diacritic";
-            case "Emoji": return "Emoji";
-            case "Emoji_Component": case "EComp": return "Emoji_Component";
-            case "Emoji_Modifier": case "EMod": return "Emoji_Modifier";
-            case "Emoji_Modifier_Base": case "EBase": return "Emoji_Modifier_Base";
-            case "Emoji_Presentation": case "EPres": return "Emoji_Presentation";
-            case "Extended_Pictographic": case "ExtPict": return "Extended_Pictographic";
-            case "Extender": case "Ext": return "Extender";
-            case "Grapheme_Base": case "Gr_Base": return "Grapheme_Base";
-            case "Grapheme_Extend": case "Gr_Ext": return "Grapheme_Extend";
-            case "Hex_Digit": case "Hex": return "Hex_Digit";
-            case "IDS_Binary_Operator": case "IDSB": return "IDS_Binary_Operator";
-            case "IDS_Trinary_Operator": case "IDST": return "IDS_Trinary_Operator";
-            case "ID_Continue": case "IDC": return "ID_Continue";
-            case "ID_Start": case "IDS": return "ID_Start";
-            case "Ideographic": case "Ideo": return "Ideographic";
-            case "Join_Control": case "Join_C": return "Join_Control";
-            case "Logical_Order_Exception": case "LOE": return "Logical_Order_Exception";
-            case "Lowercase": case "Lower": return "Lowercase";
-            case "Math": return "Math";
-            case "Noncharacter_Code_Point": case "NChar": return "Noncharacter_Code_Point";
-            case "Pattern_Syntax": case "Pat_Syn": return "Pattern_Syntax";
-            case "Pattern_White_Space": case "Pat_WS": return "Pattern_White_Space";
-            case "Quotation_Mark": case "QMark": return "Quotation_Mark";
-            case "Radical": return "Radical";
-            case "Regional_Indicator": case "RI": return "Regional_Indicator";
-            case "Sentence_Terminal": case "STerm": return "Sentence_Terminal";
-            case "Soft_Dotted": case "SD": return "Soft_Dotted";
-            case "Terminal_Punctuation": case "Term": return "Terminal_Punctuation";
-            case "Unified_Ideograph": case "UIdeo": return "Unified_Ideograph";
-            case "Uppercase": case "Upper": return "Uppercase";
-            case "Variation_Selector": case "VS": return "Variation_Selector";
-            case "White_Space": case "space": return "White_Space";
-            case "XID_Continue": case "XIDC": return "XID_Continue";
-            case "XID_Start": case "XIDS": return "XID_Start";
-            default: return null;
-        }
+        return BINARY_PROPERTY_NAMES_BY_NAME.get(name);
     }
 
     /**
@@ -282,6 +303,41 @@ final class CharSet {
             default:
                 return ucd.binary(canonical);
         }
+    }
+
+    /**
+     * Whether the expression between the braces of {@code \p{...}} names a property under a version of Unicode, as
+     * {@link #propertySet} finds one, without building its set.
+     */
+    static boolean hasProperty(Ucd ucd, String expr) {
+        int eq = expr.indexOf('=');
+        if (eq >= 0) {
+            String name = expr.substring(0, eq);
+            String value = expr.substring(eq + 1);
+            switch (name) {
+                case "General_Category":
+                case "gc":
+                    return hasCategory(ucd, value);
+                case "Script":
+                case "sc":
+                    return ucd.hasScript(value);
+                case "Script_Extensions":
+                case "scx":
+                    return ucd.hasScriptExtensions(value);
+                default:
+                    return false;
+            }
+        }
+        if (hasCategory(ucd, expr)) {
+            return true;
+        }
+        String canonical = binaryName(expr);
+        return canonical != null && (canonical.equals("ASCII") || canonical.equals("Any") || ucd.hasBinary(canonical));
+    }
+
+    private static boolean hasCategory(Ucd ucd, String value) {
+        String name = categoryName(value);
+        return name != null && ucd.hasCategory(name);
     }
 
     private static int[] categoryPairs(Ucd ucd, String value) {

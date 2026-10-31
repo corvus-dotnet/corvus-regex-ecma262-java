@@ -6,13 +6,13 @@ public final class Flags {
     public static final Flags NONE = new Flags(0);
 
     private static final String LETTERS = "dgimsuvy";
-    private static final int D = 1;
+    static final int D = 1;
     private static final int G = 2;
     private static final int I = 4;
     private static final int M = 8;
     private static final int S = 16;
-    private static final int U = 32;
-    private static final int V = 64;
+    static final int U = 32;
+    static final int V = 64;
     private static final int Y = 128;
 
     private final int bits;
@@ -26,6 +26,10 @@ public final class Flags {
      * with {@code v}. It throws a {@link RegexException} of kind {@link RegexException.Kind#FLAGS} for any other.
      */
     public static Flags parse(String flags) {
+        int valid = bitsOf(flags);
+        if (valid >= 0) {
+            return new Flags(valid);
+        }
         int bits = 0;
         for (int k = 0; k < flags.length(); k++) {
             char c = flags.charAt(k);
@@ -40,10 +44,23 @@ public final class Flags {
             }
             bits |= 1 << at;
         }
-        if ((bits & U) != 0 && (bits & V) != 0) {
-            throw RegexException.flags("the flags u and v are given together in " + RegexException.quote(flags));
+        throw RegexException.flags("the flags u and v are given together in " + RegexException.quote(flags));
+    }
+
+    /**
+     * The flags as bits ({@link #U}, {@link #V}, ...), read as {@link #parse} reads them, or -1 for flags that are not
+     * valid. It allocates nothing.
+     */
+    static int bitsOf(String flags) {
+        int bits = 0;
+        for (int k = 0; k < flags.length(); k++) {
+            int at = LETTERS.indexOf(flags.charAt(k));
+            if (at < 0 || (bits & 1 << at) != 0) {
+                return -1;
+            }
+            bits |= 1 << at;
         }
-        return new Flags(bits);
+        return (bits & U) != 0 && (bits & V) != 0 ? -1 : bits;
     }
 
     /** {@code d}: accepted for completeness. The positions of the groups are always kept, so it changes nothing. */

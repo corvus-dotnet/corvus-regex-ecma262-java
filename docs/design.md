@@ -27,6 +27,16 @@ version of Unicode (`UnicodeVersion.DEFAULT`, 17 today). `Regex.builder` overrid
 flags and the match timeout: `Edition.ES2020` is the grammar JSON Schema 2020-12 names, and the versions are `V13`,
 `V17`, `V18` and `LATEST`. Both are resolved when the pattern is compiled.
 
+**Validity.** `Regex.isValid` reads a pattern as compiling it would, so a pattern over a limit of size is not valid
+there. `Regex.isValidPattern` asks the grammar alone, as the .NET engine's `IsValidPattern` and the Rust crate's
+`is_valid_pattern` do: a pattern too large to compile is valid there when its grammar is. It reads the pattern in place
+(`Validator`, the Rust crate's `validate.rs` in Java, which makes the parser's decision at each step), with the groups
+and the nested classes of the v flag on stacks of its own, so no pattern can overflow the stack. The stacks are the
+thread's, kept between patterns, and a property name is looked up as its place in the pattern, so once they have grown
+to what its patterns need it allocates nothing. The data-set runner asks the reader about every record in every grammar
+and checks its answer against V8's. This is what a JSON Schema `format: regex` check needs: the grammar, whatever an
+engine's limits.
+
 **Errors.** A pattern that does not compile throws `RegexException`, an `IllegalArgumentException`, whose `kind()` is
 `INVALID`, `FLAGS` or `TOO_LARGE`; `tryCompile` and `Builder.tryBuild` return a `CompileResult` in place of throwing. A
 match that reaches its limit throws `MatchLimitException` (`TIME` or `MEMORY`); bytes that are not UTF-8 throw

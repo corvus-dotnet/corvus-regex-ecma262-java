@@ -174,6 +174,32 @@ class EditionExample {
 }
 ```
 
+`Regex.isValid` reads a pattern as compiling it would, so a pattern over a limit of size is not valid there.
+`Regex.isValidPattern` (with flags as a string, or with `Flags`, an edition and a version of Unicode) asks the grammar
+alone, allocates nothing once the thread has read a pattern of the size, and counts a pattern too large to compile as
+valid when its grammar is. It is the check for a JSON Schema `format: regex`.
+
+```java
+import io.github.corvusdotnet.regex.ecma262.Edition;
+import io.github.corvusdotnet.regex.ecma262.Flags;
+import io.github.corvusdotnet.regex.ecma262.Regex;
+import io.github.corvusdotnet.regex.ecma262.UnicodeVersion;
+
+class ValidityExample {
+    public static void main(String[] args) {
+        String deep = "(".repeat(5000) + ")".repeat(5000);
+        check(!Regex.isValid(deep, "u") && Regex.isValidPattern(deep, "u"));
+
+        // ECMAScript 2020 has no modifier groups.
+        check(!Regex.isValidPattern("(?i:a)", Flags.parse("u"), Edition.ES2020, UnicodeVersion.DEFAULT));
+    }
+
+    static void check(boolean ok) {
+        if (!ok) throw new AssertionError();
+    }
+}
+```
+
 ## Matching
 
 The methods are those of a `RegExp`, with the position as an argument where JavaScript keeps `lastIndex`:

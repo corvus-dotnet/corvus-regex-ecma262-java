@@ -107,4 +107,44 @@ class AllocationTest {
             }
         }
     }
+
+    /**
+     * The grammar-only reader allocates nothing once the thread's stacks have grown to what its patterns need: for a
+     * pattern valid or not, in any grammar, it keeps a group name and a property name as their places in the pattern.
+     */
+    @Test
+    void theGrammarOnlyReaderAllocatesNothing() {
+        StringBuilder names = new StringBuilder();
+        for (int n = 0; n < 40; n++) {
+            names.append("(?<n").append(n).append(">a)");
+        }
+        names.append("\\k<n39>");
+        String nested = "(?:".repeat(300) + "a" + ")".repeat(300);
+        String[][] cases = {
+            {"^[a-z][a-z0-9_]{0,29}$", "u"},
+            {"^(?<year>\\d{4})-(?<month>\\d{2})\\k<year>$", "u"},
+            {"(?<a>x)|(?<a>y)", "u"},
+            {"^\\p{Script=Greek}+\\P{L}\\p{sc=Zzzz}$", "u"},
+            {"[\\p{L}--[a-z]&&\\q{abc|d}]", "v"},
+            {"[^\\p{RGI_Emoji}]", "v"},
+            {"\\p{NoSuchProperty}", "u"},
+            {"(?i:a)(?<=b)(?!c)", ""},
+            {"\\8[\\c_]\\k{2}", ""},
+            {"[z-a]", "u"},
+            {"(?<a>x)(?<a>y)", "u"},
+            {names.toString(), "u"},
+            {nested, "u"},
+        };
+        Flags[] flags = new Flags[cases.length];
+        for (int k = 0; k < cases.length; k++) {
+            flags[k] = Flags.parse(cases[k][1]);
+        }
+        long n = allocations(() -> {
+            for (int k = 0; k < cases.length; k++) {
+                Regex.isValidPattern(cases[k][0], cases[k][1]);
+                Regex.isValidPattern(cases[k][0], flags[k], Edition.ES2020, UnicodeVersion.V13);
+            }
+        });
+        assertEquals(0, n, n + " bytes in 50 runs");
+    }
 }

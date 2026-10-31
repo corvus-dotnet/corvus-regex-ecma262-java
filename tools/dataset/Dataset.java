@@ -1,5 +1,6 @@
 import io.github.corvusdotnet.regex.ecma262.Captures;
 import io.github.corvusdotnet.regex.ecma262.Edition;
+import io.github.corvusdotnet.regex.ecma262.Flags;
 import io.github.corvusdotnet.regex.ecma262.Match;
 import io.github.corvusdotnet.regex.ecma262.MatchLimitException;
 import io.github.corvusdotnet.regex.ecma262.Regex;
@@ -100,6 +101,9 @@ public final class Dataset {
 
     static boolean utf16;
     static boolean utf8;
+    /** The answers of the grammar-only reader ({@link Regex#isValidPattern}) that agree with V8's, and those that do not. */
+    static final AtomicLong READER_RIGHT = new AtomicLong();
+    static final AtomicLong READER_WRONG = new AtomicLong();
 
     public static void main(String[] args) throws Exception {
         List<String> rest = new ArrayList<>(List.of(args));
@@ -206,7 +210,9 @@ public final class Dataset {
         System.out.printf("records %d (skipped %d deviations)  right %d  wrong %d  refused-valid %d  accepted-invalid %d  limit %d  errors %d  in %.1fs%n",
                 records.get(), skipped.get(), total.right.get(), total.wrong.get(), total.refused.get(),
                 total.accepted.get(), total.limited.get(), total.errors.get(), (System.nanoTime() - clock) / 1e9);
-        long bad = total.wrong.get() + total.refused.get() + total.accepted.get() + total.errors.get() + total.limited.get();
+        System.out.printf("grammar-only reader: right %d  wrong %d%n", READER_RIGHT.get(), READER_WRONG.get());
+        long bad = total.wrong.get() + total.refused.get() + total.accepted.get() + total.errors.get() + total.limited.get()
+                + READER_WRONG.get();
         System.exit(bad == 0 ? 0 : 1);
     }
 
@@ -337,6 +343,7 @@ public final class Dataset {
             judgeExec(r, pattern, counts, wrong);
             return;
         }
+        judgeReader(name, r, pattern, wrong);
         if (name.equals("captures.jsonl")) {
             if (utf16) {
                 judgeCaptures(r, pattern, counts, wrong);
@@ -350,6 +357,31 @@ public final class Dataset {
             return;
         }
         judgeTests(name, r, pattern, counts, wrong);
+    }
+
+    /**
+     * Asks the grammar-only reader whether the pattern is valid in each grammar of the record, as V8 answered. It reads
+     * no limit of size, so its answer is the grammar's for a pattern of any size.
+     */
+    static void judgeReader(String name, Object r, String pattern, List<String> wrong) {
+        String flags = (String) get(r, "flags");
+        for (Object[] mode : modes(r)) {
+            String modeFlags = flags + mode[0];
+            boolean expectedValid = (Boolean) mode[2];
+            boolean valid;
+            try {
+                valid = Regex.isValidPattern(pattern, Flags.parse(modeFlags), edition, unicodeVersion);
+            } catch (RegexException e) {
+                valid = false;
+            }
+            if (valid == expectedValid) {
+                READER_RIGHT.incrementAndGet();
+            } else {
+                READER_WRONG.incrementAndGet();
+                wrong.add("READER\t" + name + "\t/" + escape(pattern) + "/" + modeFlags + "\tV8 says "
+                        + (expectedValid ? "valid" : "not valid"));
+            }
+        }
     }
 
     static void judgeIllFormed(Object r, String pattern, Counts counts, List<String> wrong) {
